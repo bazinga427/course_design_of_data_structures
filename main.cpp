@@ -2,7 +2,9 @@
 #include <fstream>
 #include <vector>
 #include <string>
-
+#include<queue>
+#include <algorithm>
+# include<sstream>
 using namespace std;
 
 class Graph {
@@ -52,7 +54,66 @@ public:  //main函数中可以调用
             adj_matrix[v][u] = 1;
         }
     }
+    
+    void dfs_util(int u, vector<bool>& visited, vector<int>& seq) {
+        visited[u] = true;
+        seq.push_back(u); 
+        
+        for (int v : adj_list[u]) {
+            if (!visited[v]) {
+                dfs_util(v, visited, seq);
+            }
+        }
+    }
 
+    vector<int> get_dfs_sequence(int start_node) {
+        vector<bool> visited(n + 1, false);
+        vector<int> seq;
+        dfs_util(start_node, visited, seq);
+        return seq;
+    }
+
+    vector<int> get_bfs_sequence(int start_node) {
+        vector<bool> visited(n + 1, false);
+        queue<int> q;
+        vector<int> seq;
+
+        q.push(start_node);
+        visited[start_node] = true;
+
+        while (!q.empty()) {
+            int u = q.front();
+            q.pop();
+            seq.push_back(u); 
+
+            for (int v : adj_list[u]) {
+                if (!visited[v]) {
+                    visited[v] = true;
+                    q.push(v);
+                }
+            }
+        }
+        return seq;
+    }
+
+   
+    void check_sequence_simple(const vector<int>& user_seq, int start_node) {
+       
+        vector<int> standard_dfs = get_dfs_sequence(start_node);
+        vector<int> standard_bfs = get_bfs_sequence(start_node);
+    
+
+        
+        if (user_seq == standard_dfs && user_seq == standard_bfs) {
+            cout << " DFS && BFS " << endl;
+        } else if (user_seq == standard_dfs) {
+            cout << " DFS " << endl;
+        } else if (user_seq == standard_bfs) {
+            cout << " BFS " << endl;
+        } else {
+            cout << "None" << endl;
+        }
+    }
     void print_graph() {
         cout << "\n--- Adjacency List ---" << endl;
         for (int i = 0; i < n; ++i) {
@@ -63,6 +124,7 @@ public:  //main函数中可以调用
             cout << endl;
         }
     }
+
 };
 
 int main() {
@@ -71,6 +133,31 @@ int main() {
     
     g.build_from_file("graph2.txt");
     g.print_graph();
+    vector<int>ans;
+    ans=g.get_bfs_sequence(1);
+    for(auto i:ans){
+        cout<<i<<" ";
+    }
+    cout<<endl;
+    vector<int> input;
+    string line;
+    
+    // 读取整行输入直到遇到回车
+    getline(cin, line); 
+    
+    // 用 stringstream 将这一行字符串里的数字提取出来
+    stringstream ss(line);
+    int temp;
+    while (ss >> temp) {
+        input.push_back(temp);
+    }
 
+    if (input.empty()) {
+        cout << "none" << endl;
+    }
+    
+    int start = input[0]; 
+    input.erase(input.begin());
+    g.check_sequence_simple(input, start);
     return 0;
 }
