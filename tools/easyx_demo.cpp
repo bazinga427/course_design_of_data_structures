@@ -66,13 +66,20 @@ int main() {
 
     FlushBatchDraw();           // 把上面画的全部显示出来
 
-    // ---------- 5. 等一次按键或鼠标点击 ----------
-    // 以后做 DFS/BFS 动画时，这里就是消息循环：
-    // 每帧先处理事件，再重画，最后 FlushBatchDraw()。
+    // ---------- 5. 等一次按键或鼠标左键点击 ----------
+    // 这里就是以后做 DFS/BFS 动画要用的消息循环骨架：
+    // 每帧先把积压的事件全部取走并处理，再重画，最后 FlushBatchDraw()。
+    //
+    // 注意这个坑：鼠标只要动一下就会产生 WM_MOUSEMOVE 消息，
+    // 所以「一收到消息就退出」会立刻关窗口，必须判断消息类型。
     ExMessage msg;
-    while (true) {
-        if (peekmessage(&msg, EX_KEY | EX_MOUSE)) {
-            break;
+    bool quit = false;
+    while (!quit) {
+        while (peekmessage(&msg, EX_MOUSE | EX_KEY)) {
+            if (msg.message == WM_LBUTTONDOWN || msg.message == WM_KEYDOWN) {
+                quit = true;
+                break;
+            }
         }
         Sleep(30);
     }
