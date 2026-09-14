@@ -11,10 +11,15 @@
                 "-static",
                 "-static-libgcc",
                 "-static-libstdc++",
+                "-I",
+                "${workspaceFolder}/third_party/easyx/include",
+                "-L",
+                "${workspaceFolder}/third_party/easyx/lib64",
                 "${workspaceFolder}\\main.cpp",
                 "${workspaceFolder}\\graph.cpp",
                 "-o",
-                "${workspaceFolder}\\main.exe"
+                "${workspaceFolder}\\main.exe",
+                "-leasyx"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -26,7 +31,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "用 PATH 里的 g++ 编译，不写死任何机器路径。队友加了 ui.cpp / layout.cpp 之后，在 args 里把文件名加进去，末尾再加 \"-leasyx\"。"
+            "detail": "用 PATH 里的 g++ 编译。EasyX 已经放在 third_party 目录里，-I / -L / -leasyx 都已经配好（必须带 -I，否则会撞上 MinGW 自带的 EGE 图形库）。队友加了 ui.cpp / layout.cpp 之后，只要在 \"-o\" 那行之前把文件名补进去即可。"
         }
     ],
     "version": "2.0.0"

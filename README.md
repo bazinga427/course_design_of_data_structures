@@ -19,8 +19,23 @@
 
 	2.6判别遍历序列 Y
 
-	2.7显示图结构
+	2.7显示图结构(easyx)
 
 	2.8输出强连通分量
 
 	2.9**最大流最小割**
+
+---
+
+## 编译与运行
+
+环境要求：Windows 系统 + MinGW-w64 的 g++（EasyX 图形库已经放进本仓库的 `third_party` 目录，不需要另外安装）。
+
+两种编译方式，任选一种：
+
+1. 用 VSCode 打开本文件夹，按 `Ctrl+Shift+B`。
+2. 直接双击 `build.bat`。
+
+编译出来的 `main.exe` 是静态链接的，可以拷到任何一台 Windows 电脑上直接运行，对方不需要安装 MinGW 或 EasyX。注意：程序用相对路径读取 `graph.txt` / `graph2.txt`，所以 exe 要和这些数据文件放在同一个文件夹里。
+
+需要注意的一个坑：本机 MinGW 自带的 `graphics.h` 其实是 EGE 图形库的，会和 EasyX 冲突。所以编译时必须加上 `-I third_party/easyx/include` 参数，`tasks.json` 和 `build.bat` 里已经写好了。
