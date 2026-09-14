@@ -1,0 +1,11 @@
+# 编译产物（这些不应该提交到仓库，队友那边自己编就行）
+*.exe
+*.o
+*.obj
+*.out
+
+# VSCode 的 IntelliSense 缓存
+.vscode/ipch/
+
+# 构建输出目录（如果以后改用 build 目录放产物）
+build/
