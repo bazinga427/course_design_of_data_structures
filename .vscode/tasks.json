@@ -1,4 +1,5 @@
 {
+    "version": "2.0.0",
     "tasks": [
         {
             "type": "cppbuild",
@@ -17,6 +18,7 @@
                 "${workspaceFolder}/third_party/easyx/lib64",
                 "${workspaceFolder}\\main.cpp",
                 "${workspaceFolder}\\graph.cpp",
+                "${workspaceFolder}\\flow.cpp",
                 "-o",
                 "${workspaceFolder}\\main.exe",
                 "-leasyx"
@@ -31,33 +33,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "用 PATH 里的 g++ 编译。EasyX 已经放在 third_party 目录里，-I / -L / -leasyx 都已经配好（必须带 -I，否则会撞上 MinGW 自带的 EGE 图形库）。队友加了 ui.cpp / layout.cpp 之后，只要在 \"-o\" 那行之前把文件名补进去即可。"
-        },
-        {
-            "type": "cppbuild",
-            "label": "编译 EasyX 测试程序",
-            "command": "g++",
-            "args": [
-                "-fdiagnostics-color=always",
-                "-g",
-                "-std=c++17",
-                "-I",
-                "${workspaceFolder}/third_party/easyx/include",
-                "-L",
-                "${workspaceFolder}/third_party/easyx/lib64",
-                "${workspaceFolder}\\tools\\easyx_demo.cpp",
-                "-o",
-                "${workspaceFolder}\\tools\\easyx_demo.exe",
-                "-leasyx"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": [
-                "$gcc"
-            ],
-            "detail": "只编译 tools/easyx_demo.cpp，用来确认 EasyX 环境正常。编译完双击 tools\\easyx_demo.exe 就能看到窗口。"
+            "detail": "Ctrl+Shift+B 编译。以后加了 ui.cpp / flow.cpp，把文件名补在 -o 那行之前即可。"
         }
-    ],
-    "version": "2.0.0"
+    ]
 }
