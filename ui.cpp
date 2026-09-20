@@ -264,6 +264,7 @@ enum ButtonId {
     BTN_BFS,
     BTN_DFS,
     BTN_FLOW,
+    BTN_STEP,
     BTN_STOP,
     BTN_HELP
 };
@@ -361,7 +362,7 @@ private:
     size_t flow_step = 0;                          // 已经播完几次增广
     bool show_cut = false;                         // 是否已经标出最小割
     bool paused = false;                           // 动画暂停
-    int interval_ms = 420;                         // 每步间隔（毫秒）
+    int interval_ms = 600;                         // 每步间隔（毫秒）
     DWORD next_tick = 0;                           // 下一步的时间点
     int sink_node = -1;                            // 汇点（右键点的那个节点）
 
@@ -413,6 +414,7 @@ private:
             {BTN_BFS,    "BFS 遍历"},
             {BTN_DFS,    "DFS 遍历"},
             {BTN_FLOW,   "最大流"},
+            {BTN_STEP,   "单步"},
             {BTN_STOP,   "停止"},
             {BTN_HELP,   "帮助"},
         };
@@ -860,6 +862,7 @@ private:
         case 'B': start_traversal(true); break;      // 广度优先遍历动画
         case 'D': start_traversal(false); break;     // 深度优先遍历动画
         case 'M': start_flow(); break;               // 最大流最小割
+        case 'N': step_forward(); break;             // 单步：点一下走一步
         case 'S': stop_animation(); break;           // 停止动画
         case VK_SPACE:
             if (algo != Algo::None) {
@@ -899,6 +902,7 @@ private:
         case BTN_BFS: start_traversal(true); break;
         case BTN_DFS: start_traversal(false); break;
         case BTN_FLOW: start_flow(); break;
+        case BTN_STEP: step_forward(); break;
         case BTN_STOP: stop_animation(); break;
         case BTN_HELP: show_help = !show_help; break;
         default: break;
@@ -1166,7 +1170,7 @@ private:
         flow_step = 0;
         show_cut = false;
         paused = false;
-        interval_ms = 420;
+        interval_ms = 600;            // 自动播放的节奏（嫌快就按 N 单步）
         next_tick = GetTickCount() + interval_ms;
         set_toast(std::string(bfs ? "BFS" : "DFS") + " 从节点 " + std::to_string(s) +
                   " 开始，一共会访问 " + std::to_string(seq.size()) + " 个节点");
@@ -1193,7 +1197,7 @@ private:
         path_nodes.clear();
         show_cut = false;
         paused = false;
-        interval_ms = 900;            // 一次增广路播一步，慢一点才看得清
+        interval_ms = 1200;           // 一次增广路播一步，慢一点才看得清
         next_tick = GetTickCount() + interval_ms;
 
         if (flow.steps.empty()) {
@@ -1215,6 +1219,32 @@ private:
             return;
         }
         next_tick = now + interval_ms;
+        advance_one_step();
+    }
+
+    // 单步：立刻往前走一步，并且转成手动模式，
+    // 之后要再点一下「单步」才会走下一步（按空格可以回到自动播放）
+    void step_forward() {
+        if (algo == Algo::None) {
+            set_toast("先按 B / D / M 开始一个演示，然后再单步");
+            return;
+        }
+
+        const bool at_end = (algo == Algo::Bfs || algo == Algo::Dfs)
+                                ? (step >= seq.size())
+                                : (flow_step >= flow.steps.size());
+        if (at_end) {
+            set_toast("已经到最后一步了");
+            return;
+        }
+
+        paused = true;                             // 手动模式
+        next_tick = GetTickCount() + interval_ms;
+        advance_one_step();
+    }
+
+    // 真正往前走一步：遍历就是多亮一个点，最大流就是多推一条增广路
+    void advance_one_step() {
 
         if (algo == Algo::Bfs || algo == Algo::Dfs) {
             if (step >= seq.size()) {
@@ -1733,7 +1763,7 @@ private:
             std::snprintf(buf, sizeof(buf), "进度 %d / %d", static_cast<int>(n),
                           static_cast<int>(seq.size()));
             lines.push_back(buf);
-            lines.push_back("单击节点换起点 · 空格暂停 · S 停止");
+            lines.push_back("单击节点换起点 · N 单步 · 空格自动播放 · S 停止");
         } else if (algo == Algo::Flow) {
             std::snprintf(buf, sizeof(buf), "最大流最小割    源 %d → 汇 %d", start_id(), sink_id());
             lines.push_back(buf);
@@ -1764,7 +1794,7 @@ private:
                 }
                 lines.push_back(cut.empty() ? std::string("割边：（没有）") : ("割边：" + cut));
             }
-            lines.push_back("边上显示 流量/容量 · 单击换源点 · 右键换汇点");
+            lines.push_back("边上显示 流量/容量 · N 单步 · 单击换源点 · 右键换汇点");
         }
 
         // 量一下最宽的一行，面板宽度跟着文字走
@@ -1950,7 +1980,7 @@ private:
                      std::to_string(flow_step) + " / " + std::to_string(flow.steps.size()) + "）";
         }
         if (algo != Algo::None && paused) {
-            right += "  已暂停";
+            right += "  已暂停（N 单步 / 空格继续）";
         }
 
         const std::string l = gbk(left);
@@ -1997,7 +2027,8 @@ private:
             {"B",                     "广度优先（BFS）遍历动画"},
             {"D",                     "深度优先（DFS）遍历动画"},
             {"M",                     "最大流最小割动画（边上显示 流量/容量）"},
-            {"空格",                  "暂停 / 继续动画"},
+            {"N / 「单步」",          "点一下走一步（会自动停下来，节奏完全由你控制）"},
+            {"空格",                  "暂停 / 继续自动播放"},
             {"S",                     "停止动画"},
             {"E",                     "显示 / 隐藏每个节点的度数"},
             {"F",                     "适应窗口：自动缩放到刚好放得下整张图"},
