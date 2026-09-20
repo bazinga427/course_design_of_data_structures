@@ -19,9 +19,13 @@
                 "${workspaceFolder}\\main.cpp",
                 "${workspaceFolder}\\graph.cpp",
                 "${workspaceFolder}\\flow.cpp",
+                "${workspaceFolder}\\ui.cpp",
+                "${workspaceFolder}\\layout.cpp",
+                "${workspaceFolder}\\graph_io.cpp",
                 "-o",
                 "${workspaceFolder}\\main.exe",
-                "-leasyx"
+                "-leasyx",
+                "-lcomdlg32"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -33,7 +37,20 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "Ctrl+Shift+B 编译。以后加了 ui.cpp / flow.cpp，把文件名补在 -o 那行之前即可。"
+            "detail": "Ctrl+Shift+B 编译全部源文件（graph / flow / ui / layout / graph_io）。以后再加 .cpp，把文件名补在 -o 那行之前即可。如果用的是 UCRT 版 MinGW，还需要在 -o 之前加上 tools/easyx_ucrt_compat.c。"
+        },
+        {
+            "type": "cppbuild",
+            "label": "运行 EasyX 窗口",
+            "command": "${workspaceFolder}\\main.exe",
+            "args": [
+                "1"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "直接打开图形窗口（等价于在项目目录里敲 main.exe 1）。"
         }
     ]
 }
