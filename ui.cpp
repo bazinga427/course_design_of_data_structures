@@ -23,6 +23,7 @@
 
 #include "graph_io.h"
 #include "layout.h"
+#include "flow.h"
 
 // EasyX 头文件里会 include <windows.h>，先关掉 min/max 宏，
 // 否则 std::min / std::max 会被宏替换掉，编译直接报错。
@@ -86,6 +87,18 @@ const COLORREF C_SCROLL_HOT     = RGB(120, 130, 160);
 const COLORREF C_STATUS         = RGB(29, 32, 41);
 const COLORREF C_ACCENT         = RGB(110, 170, 255);
 const COLORREF C_TOAST_BG       = RGB(38, 42, 54);
+
+// 算法动画用的颜色
+const COLORREF C_NODE_VISIT     = RGB(44, 168, 118);   // 已经访问过的点
+const COLORREF C_NODE_VISIT_E   = RGB(126, 236, 186);
+const COLORREF C_NODE_CUR       = RGB(230, 72, 72);    // 当前正在讲的那个点
+const COLORREF C_NODE_CUR_E     = RGB(255, 168, 158);
+const COLORREF C_NODE_SIDE_S    = RGB(96, 178, 255);   // 最小割的 S 侧
+const COLORREF C_NODE_SIDE_T    = RGB(226, 132, 250);  // 最小割的 T 侧
+const COLORREF C_EDGE_TREE      = RGB(255, 190, 92);   // 遍历树上的边
+const COLORREF C_EDGE_PATH      = RGB(255, 126, 126);  // 当前这条增广路
+const COLORREF C_EDGE_CUT       = RGB(255, 78, 78);    // 割边
+const COLORREF C_EDGE_FULL      = RGB(88, 196, 140);   // 已经流满的边
 
 // ---------------- 小工具 ----------------
 
@@ -248,6 +261,10 @@ enum ButtonId {
     BTN_ZOUT,
     BTN_FORCE,
     BTN_CIRCLE,
+    BTN_BFS,
+    BTN_DFS,
+    BTN_FLOW,
+    BTN_STOP,
     BTN_HELP
 };
 
@@ -282,6 +299,7 @@ public:
             while (peekmessage(&msg, EX_MOUSE | EX_KEY)) {
                 handle(msg);
             }
+            tick_animation();       // 算法动画按时间自己往前走
             draw();
             FlushBatchDraw();
             Sleep(16);              // 大约 60 帧每秒，不占满 CPU
@@ -329,6 +347,24 @@ private:
     std::string toast_text;
     DWORD toast_time = 0;
 
+    // ---------------- 算法动画的状态 ----------------
+    // 遍历动画：seq 是访问顺序（节点编号），step 表示已经亮到第几个；
+    // 最大流：flow 是 Ford-Fulkerson 的结果，flow_step 表示播到第几次增广。
+    enum class Algo { None, Bfs, Dfs, Flow };
+    Algo algo = Algo::None;
+    std::vector<int> seq;                          // 访问顺序 / 遍历结果
+    std::vector<int> parent;                       // 遍历树：编号 -> 父编号
+    size_t step = 0;                               // 遍历动画已经走到第几个
+    std::vector<std::vector<int>> disp;            // 累积流量，画 flow/cap 用
+    std::vector<int> path_nodes;                   // 当前这条增广路的节点
+    FlowResult flow;                               // 最大流结果
+    size_t flow_step = 0;                          // 已经播完几次增广
+    bool show_cut = false;                         // 是否已经标出最小割
+    bool paused = false;                           // 动画暂停
+    int interval_ms = 420;                         // 每步间隔（毫秒）
+    DWORD next_tick = 0;                           // 下一步的时间点
+    int sink_node = -1;                            // 汇点（右键点的那个节点）
+
     struct ScrollGeom {
         bool active = false;
         int track_start = 0, track_len = 0;
@@ -366,14 +402,18 @@ private:
 
     void build_buttons() {
         static const struct { int id; const char* text; } kDefs[] = {
-            {BTN_OPEN,   "打开图文件"},
+            {BTN_OPEN,   "打开"},
             {BTN_SAVE,   "保存"},
             {BTN_SHOT,   "导出图片"},
             {BTN_FIT,    "适应窗口"},
             {BTN_ZIN,    "放大"},
             {BTN_ZOUT,   "缩小"},
-            {BTN_FORCE,  "力导向布局"},
-            {BTN_CIRCLE, "圆环布局"},
+            {BTN_FORCE,  "力导向"},
+            {BTN_CIRCLE, "圆环"},
+            {BTN_BFS,    "BFS 遍历"},
+            {BTN_DFS,    "DFS 遍历"},
+            {BTN_FLOW,   "最大流"},
+            {BTN_STOP,   "停止"},
             {BTN_HELP,   "帮助"},
         };
 
@@ -622,11 +662,15 @@ private:
             on_lbutton_up();
             break;
 
-        case WM_RBUTTONDOWN:          // 右键拖动也能平移画布
+        case WM_RBUTTONDOWN:          // 右键点节点 = 把它设成汇点；右键拖空白处 = 平移画布
             mouse_x = msg.x;
             mouse_y = msg.y;
-            if (canvas.contains(mouse_x, mouse_y)) {
+            if (canvas.contains(mouse_x, mouse_y) && node_at(mouse_x, mouse_y) < 0) {
                 start_pan();
+            } else if (canvas.contains(mouse_x, mouse_y)) {
+                const int i = node_at(mouse_x, mouse_y);
+                sink_node = i;
+                set_toast("汇点 = 节点 " + std::to_string(nodes[i].id) + "（按 M 或点「最大流」）");
             }
             break;
 
@@ -809,14 +853,27 @@ private:
         case 'R': do_force_layout(); break;
         case 'C': do_circle_layout(); break;
         case 'P': do_export_image(); break;
-        case 'D':
+        case 'E':
             show_degree = !show_degree;
             set_toast(show_degree ? "已显示每个节点的度数" : "已隐藏节点的度数");
+            break;
+        case 'B': start_traversal(true); break;      // 广度优先遍历动画
+        case 'D': start_traversal(false); break;     // 深度优先遍历动画
+        case 'M': start_flow(); break;               // 最大流最小割
+        case 'S': stop_animation(); break;           // 停止动画
+        case VK_SPACE:
+            if (algo != Algo::None) {
+                paused = !paused;
+                next_tick = GetTickCount() + interval_ms;
+                set_toast(paused ? "动画已暂停（再按空格继续）" : "继续播放");
+            }
             break;
         case 'H': show_help = !show_help; break;
         case VK_ESCAPE:
             if (show_help) {
                 show_help = false;
+            } else if (algo != Algo::None) {
+                stop_animation();                    // 先停动画，再按一次才关窗口
             } else {
                 running = false;
             }
@@ -839,6 +896,10 @@ private:
         case BTN_ZOUT: zoom_center(1.0 / 1.25); break;
         case BTN_FORCE: do_force_layout(); break;
         case BTN_CIRCLE: do_circle_layout(); break;
+        case BTN_BFS: start_traversal(true); break;
+        case BTN_DFS: start_traversal(false); break;
+        case BTN_FLOW: start_flow(); break;
+        case BTN_STOP: stop_animation(); break;
         case BTN_HELP: show_help = !show_help; break;
         default: break;
         }
@@ -898,6 +959,8 @@ private:
         selected_node = -1;
         hover_node = -1;
         drag_node = -1;
+        sink_node = -1;
+        clear_algorithm();               // 换了图，之前的动画和最大流结果都失效了
         rebuild_index();
 
         // 如果上次存过节点坐标，就把位置恢复出来
@@ -1027,6 +1090,242 @@ private:
     }
 
     // ============================================================
+    //  算法：遍历动画 + 最大流最小割
+    //
+    //  画图的部分不自己算算法，只根据这里的状态决定颜色，
+    //  所以「算法」和「画图」还是分开的：想换算法只改这一块就行。
+    // ============================================================
+
+    // 起点 = 选中的那个节点；没选就用第一个节点
+    int start_id() const {
+        if (selected_node >= 0 && selected_node < static_cast<int>(nodes.size())) {
+            return nodes[selected_node].id;
+        }
+        return nodes.empty() ? 0 : nodes[0].id;
+    }
+
+    // 汇点 = 右键点过的那个节点；没点过就用最后一个节点
+    int sink_id() const {
+        if (sink_node >= 0 && sink_node < static_cast<int>(nodes.size())) {
+            return nodes[sink_node].id;
+        }
+        return nodes.empty() ? 0 : nodes.back().id;
+    }
+
+    void clear_algorithm() {
+        algo = Algo::None;
+        seq.clear();
+        parent.clear();
+        step = 0;
+        disp.clear();
+        path_nodes.clear();
+        flow = FlowResult();
+        flow_step = 0;
+        show_cut = false;
+        paused = false;
+    }
+
+    void stop_animation() {
+        if (algo == Algo::None) {
+            return;
+        }
+        clear_algorithm();
+        set_toast("已停止动画");
+    }
+
+    std::string path_text(const std::vector<int>& path) const {
+        std::string s;
+        for (size_t i = 0; i < path.size(); ++i) {
+            s += std::to_string(path[i]);
+            if (i + 1 < path.size()) {
+                s += "→";
+            }
+        }
+        return s;
+    }
+
+    // 开始一次遍历动画（bfs = true 是广度优先，false 是深度优先）
+    void start_traversal(bool bfs) {
+        if (nodes.empty()) {
+            set_toast("还没有打开图，先点「打开」");
+            return;
+        }
+
+        const int s = start_id();
+        parent.assign(g.n + 1, 0);
+        seq = bfs ? g.get_bfs_sequence(s, &parent) : g.get_dfs_sequence(s, &parent);
+        if (seq.empty()) {
+            set_toast("起点 " + std::to_string(s) + " 不在这张图里");
+            return;
+        }
+
+        algo = bfs ? Algo::Bfs : Algo::Dfs;
+        step = 0;
+        disp.clear();
+        path_nodes.clear();
+        flow_step = 0;
+        show_cut = false;
+        paused = false;
+        interval_ms = 420;
+        next_tick = GetTickCount() + interval_ms;
+        set_toast(std::string(bfs ? "BFS" : "DFS") + " 从节点 " + std::to_string(s) +
+                  " 开始，一共会访问 " + std::to_string(seq.size()) + " 个节点");
+    }
+
+    // 开始最大流最小割：源点 = 选中的节点，汇点 = 右键点过的节点
+    void start_flow() {
+        if (nodes.empty()) {
+            set_toast("还没有打开图，先点「打开」");
+            return;
+        }
+
+        const int s = start_id();
+        const int t = sink_id();
+        if (s == t) {
+            set_toast("源点和汇点不能是同一个点：先单击源点，再右键单击汇点");
+            return;
+        }
+
+        flow = max_flow_min_cut(g, s, t);
+        algo = Algo::Flow;
+        flow_step = 0;
+        disp.assign(g.n + 1, std::vector<int>(g.n + 1, 0));
+        path_nodes.clear();
+        show_cut = false;
+        paused = false;
+        interval_ms = 900;            // 一次增广路播一步，慢一点才看得清
+        next_tick = GetTickCount() + interval_ms;
+
+        if (flow.steps.empty()) {
+            show_cut = true;          // 一次都推不动：直接把割显示出来
+            set_toast("最大流 = 0：从节点 " + std::to_string(s) + " 走不到节点 " + std::to_string(t));
+        } else {
+            set_toast("Ford-Fulkerson：源 " + std::to_string(s) + " → 汇 " + std::to_string(t) +
+                      "，一共 " + std::to_string(flow.steps.size()) + " 次增广");
+        }
+    }
+
+    // 每帧调用一次：时间到了就往前走一步。不做 Sleep 等待，所以界面一直能响应
+    void tick_animation() {
+        if (algo == Algo::None || paused) {
+            return;
+        }
+        const DWORD now = GetTickCount();
+        if (now < next_tick) {
+            return;
+        }
+        next_tick = now + interval_ms;
+
+        if (algo == Algo::Bfs || algo == Algo::Dfs) {
+            if (step >= seq.size()) {
+                return;               // 播完了，画面停在最终状态
+            }
+            ++step;
+            if (step == seq.size()) {
+                set_toast(std::string(algo == Algo::Bfs ? "BFS" : "DFS") + " 遍历完成： " +
+                          path_text(seq));
+            }
+            return;
+        }
+
+        // 最大流：一次播一条增广路，把这条路上的流量累加起来，
+        // 所以边上的 flow/cap 会一步一步长上去，看得很清楚
+        if (flow_step >= flow.steps.size()) {
+            return;
+        }
+        const AugmentStep& st = flow.steps[flow_step];
+        for (size_t i = 0; i + 1 < st.path.size(); ++i) {
+            const int u = st.path[i];
+            const int v = st.path[i + 1];
+            if (u >= 1 && u <= g.n && v >= 1 && v <= g.n) {
+                disp[u][v] += st.bottleneck;
+            }
+        }
+        path_nodes = st.path;
+        ++flow_step;
+
+        if (flow_step == flow.steps.size()) {
+            show_cut = true;
+            set_toast("最大流 = " + std::to_string(flow.value) + "，割边容量和 = " +
+                      std::to_string(flow.cut_capacity) + "（两个相等才是对的，最小割已标红）");
+        } else {
+            set_toast("第 " + std::to_string(flow_step) + " 次增广： " + path_text(st.path) +
+                      "，瓶颈 " + std::to_string(st.bottleneck));
+        }
+    }
+
+    // ---------- 下面几个是给画图用的查询 ----------
+
+    bool is_visited_id(int id) const {
+        const size_t n = std::min(step, seq.size());
+        for (size_t i = 0; i < n; ++i) {
+            if (seq[i] == id) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool is_current_id(int id) const {
+        return step > 0 && step <= seq.size() && seq[step - 1] == id;
+    }
+
+    // 遍历树上的边（已经走过的那几条）
+    bool is_tree_edge(int u, int v) const {
+        if (algo != Algo::Bfs && algo != Algo::Dfs) {
+            return false;
+        }
+        if (u < 0 || v < 0 || u >= static_cast<int>(parent.size()) ||
+            v >= static_cast<int>(parent.size())) {
+            return false;
+        }
+        if (!is_visited_id(u) || !is_visited_id(v)) {
+            return false;
+        }
+        return parent[v] == u;
+    }
+
+    // 当前这条增广路上的边
+    bool is_path_edge(int u, int v) const {
+        if (algo != Algo::Flow || path_nodes.size() < 2) {
+            return false;
+        }
+        for (size_t i = 0; i + 1 < path_nodes.size(); ++i) {
+            if (path_nodes[i] == u && path_nodes[i + 1] == v) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool is_cut_edge(int u, int v) const {
+        if (algo != Algo::Flow || !show_cut) {
+            return false;
+        }
+        for (const auto& e : flow.cut_edges) {
+            if (e.first == u && e.second == v) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int flow_on(int u, int v) const {
+        if (u < 0 || v < 0 || u >= static_cast<int>(disp.size())) {
+            return 0;
+        }
+        if (v >= static_cast<int>(disp[u].size())) {
+            return 0;
+        }
+        return disp[u][v];
+    }
+
+    bool in_source_side(int id) const {
+        return std::find(flow.source_side.begin(), flow.source_side.end(), id) !=
+               flow.source_side.end();
+    }
+
+    // ============================================================
     //  画图
     // ============================================================
     void draw() {
@@ -1044,6 +1343,8 @@ private:
 
         if (show_help) {
             draw_help();
+        } else if (algo != Algo::None) {
+            draw_algo_panel();          // 算法在播的时候，左上角显示算法面板
         } else if (selected_node >= 0 && selected_node < static_cast<int>(nodes.size())) {
             draw_node_panel();
         }
@@ -1165,17 +1466,81 @@ private:
             p2.x += dx; p2.y += dy;
         }
 
-        setlinecolor(hot ? C_EDGE_HI : C_EDGE);
-        setlinestyle(PS_SOLID, hot ? 3 : 2);
+        // 颜色 / 粗细 / 箭头 / 边上的流量标注，全部交给 paint_edge
+        paint_edge(p1, p2, ux, uy, a.id, b.id, hot);
+    }
+
+    // 画一条边真正的样子（颜色 / 粗细 / 箭头 / 边上的流量标注）
+    void paint_edge(POINT p1, POINT p2, double ux, double uy, int id_a, int id_b, bool hot) {
+        COLORREF color = C_EDGE;
+        int width = 2;
+
+        if (is_cut_edge(id_a, id_b)) {
+            color = C_EDGE_CUT;
+            width = 5;
+        } else if (is_path_edge(id_a, id_b)) {
+            color = C_EDGE_PATH;
+            width = 4;
+        } else if (is_tree_edge(id_a, id_b)) {
+            color = C_EDGE_TREE;
+            width = 4;
+        } else if (algo == Algo::Flow && edge_saturated(id_a, id_b)) {
+            color = C_EDGE_FULL;
+            width = 3;
+        } else if (hot) {
+            color = C_EDGE_HI;
+            width = 3;
+        }
+
+        setlinecolor(color);
+        setlinestyle(PS_SOLID, width);
         line(p1.x, p1.y, p2.x, p2.y);
 
         if (directed) {
-            draw_arrow(p2, ux, uy, hot);
+            draw_arrow(p2, ux, uy, color);
         }
+
+        // 算过最大流之后，每条边上标「流量/容量」
+        if (algo != Algo::Flow || disp.empty()) {
+            return;
+        }
+        if (id_a < 1 || id_b < 1 || id_a > g.n || id_b > g.n) {
+            return;
+        }
+        const int cap = g.cap_matrix[id_a][id_b];
+        if (cap <= 0) {
+            return;
+        }
+
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), "%d/%d", edge_flow_show(id_a, id_b), cap);
+        use_num_font(14);
+        settextcolor(edge_saturated(id_a, id_b) ? C_EDGE_FULL : C_TEXT_DIM);
+
+        const int mx = (p1.x + p2.x) / 2 + static_cast<int>(std::lround(-uy * 14.0));
+        const int my = (p1.y + p2.y) / 2 + static_cast<int>(std::lround(ux * 14.0));
+        outtextxy(mx - textwidth(buf) / 2, my - textheight(buf) / 2, buf);
     }
 
-    // 箭头：在终点处画两根短线，方向沿着 (ux, uy)
-    void draw_arrow(POINT tip, double ux, double uy, bool hot) {
+    // 边上要显示的流量：有向图就是这条弧上的流量；
+    // 无向图两个方向都会有推送，显示净流量的大小
+    int edge_flow_show(int u, int v) const {
+        if (directed) {
+            return flow_on(u, v);
+        }
+        return std::abs(flow_on(u, v) - flow_on(v, u));
+    }
+
+    bool edge_saturated(int u, int v) const {
+        if (algo != Algo::Flow || u < 1 || v < 1 || u > g.n || v > g.n) {
+            return false;
+        }
+        const int cap = g.cap_matrix[u][v];
+        return cap > 0 && edge_flow_show(u, v) >= cap;
+    }
+
+    // 箭头：在终点处画两根短线，方向沿着 (ux, uy)，颜色跟线保持一致
+    void draw_arrow(POINT tip, double ux, double uy, COLORREF color) {
         const double angle = std::atan2(uy, ux);
         const double size = std::max(9.0, node_radius_px() * 0.6);
         // 两根倒刺都往「线的来向」偏，也就是从箭尖往回画，
@@ -1188,7 +1553,7 @@ private:
         p2.x = static_cast<LONG>(std::lround(tip.x - size * std::cos(angle + spread)));
         p2.y = static_cast<LONG>(std::lround(tip.y - size * std::sin(angle + spread)));
 
-        setlinecolor(hot ? C_EDGE_HI : C_EDGE);
+        setlinecolor(color);
         setlinestyle(PS_SOLID, 2);
         line(tip.x, tip.y, p1.x, p1.y);
         line(tip.x, tip.y, p2.x, p2.y);
@@ -1209,7 +1574,7 @@ private:
         POINT tip;
         tip.x = cx + rr;
         tip.y = cy + rr / 2;
-        draw_arrow(tip, 0.6, 0.8, hot);
+        draw_arrow(tip, 0.6, 0.8, hot ? C_EDGE_HI : C_EDGE);
     }
 
     bool are_adjacent(int a, int b) const {
@@ -1246,20 +1611,53 @@ private:
             COLORREF fill = C_NODE;
             COLORREF border = C_NODE_EDGE;
 
-            if (selected_node >= 0 && selected_node != i &&
-                are_adjacent(nodes[selected_node].id, nodes[i].id)) {
-                fill = C_NODE_NEIGH;      // 选中节点的邻居换个颜色
-                border = C_NODE_NEIGH_EDGE;
-            }
-            if (i == selected_node) {
-                fill = C_NODE_SEL;
-                border = C_NODE_SEL_EDGE;
-            }
-            if (i == drag_node || i == hover_node) {
-                fill = (i == selected_node) ? C_NODE_SEL : C_NODE_HOT;
+            if (algo != Algo::None) {
+                // 算法在播的时候，颜色由算法状态决定，
+                // 遍历：绿 = 已经走过，红 = 当前这个点；
+                // 最大流：蓝 = 最小割的 S 侧，紫 = T 侧
+                if (algo == Algo::Bfs || algo == Algo::Dfs) {
+                    if (is_visited_id(nodes[i].id)) {
+                        fill = C_NODE_VISIT;
+                        border = C_NODE_VISIT_E;
+                    }
+                    if (is_current_id(nodes[i].id)) {
+                        fill = C_NODE_CUR;
+                        border = C_NODE_CUR_E;
+                    }
+                } else if (algo == Algo::Flow && show_cut) {
+                    fill = in_source_side(nodes[i].id) ? C_NODE_SIDE_S : C_NODE_SIDE_T;
+                }
+                if (i == drag_node || i == hover_node) {
+                    fill = C_NODE_HOT;
+                }
+            } else {
+                if (selected_node >= 0 && selected_node != i &&
+                    are_adjacent(nodes[selected_node].id, nodes[i].id)) {
+                    fill = C_NODE_NEIGH;      // 选中节点的邻居换个颜色
+                    border = C_NODE_NEIGH_EDGE;
+                }
+                if (i == selected_node) {
+                    fill = C_NODE_SEL;
+                    border = C_NODE_SEL_EDGE;
+                }
+                if (i == drag_node || i == hover_node) {
+                    fill = (i == selected_node) ? C_NODE_SEL : C_NODE_HOT;
+                }
             }
 
-            if (i == selected_node) {     // 选中的节点外面加一圈光晕
+            if (algo != Algo::None) {
+                // 起点（源点）画一圈，汇点再外面多画一圈
+                if (nodes[i].id == start_id()) {
+                    setlinecolor(C_ACCENT);
+                    setlinestyle(PS_SOLID, 2);
+                    circle(p.x, p.y, r + 5);
+                }
+                if (algo == Algo::Flow && nodes[i].id == sink_id()) {
+                    setlinecolor(C_NODE_SIDE_T);
+                    setlinestyle(PS_SOLID, 2);
+                    circle(p.x, p.y, r + 8);
+                }
+            } else if (i == selected_node) {     // 选中的节点外面加一圈光晕
                 setlinecolor(C_NODE_SEL_GLOW);
                 setlinestyle(PS_SOLID, 2);
                 circle(p.x, p.y, r + 5);
@@ -1287,6 +1685,106 @@ private:
                     use_num_font(std::max(9, std::min(static_cast<int>(std::lround(r * 0.95)), 64)));
                 }
             }
+        }
+    }
+
+    std::string join_ids(const std::vector<int>& v) const {
+        std::string s;
+        for (size_t i = 0; i < v.size(); ++i) {
+            s += std::to_string(v[i]);
+            if (i + 1 < v.size()) {
+                s += " ";
+            }
+        }
+        return s;
+    }
+
+    // 算法在播的时候，左上角显示算法面板（和邻接表面板同一个位置，二选一）
+    void draw_algo_panel() {
+        std::vector<std::string> lines;
+        char buf[256];
+
+        if (algo == Algo::Bfs || algo == Algo::Dfs) {
+            std::snprintf(buf, sizeof(buf), "%s 遍历    起点 %d",
+                          algo == Algo::Bfs ? "BFS" : "DFS", start_id());
+            lines.push_back(buf);
+
+            const size_t n = std::min(step, seq.size());
+            const size_t kMaxShow = 16;
+            std::string order = "访问顺序：";
+            if (n == 0) {
+                order += "（还没开始）";
+            } else {
+                const size_t show = std::min(n, kMaxShow);
+                order += path_text(std::vector<int>(seq.begin(), seq.begin() + show));
+                if (n > show) {
+                    order += " ...";
+                }
+            }
+            lines.push_back(order);
+
+            std::snprintf(buf, sizeof(buf), "进度 %d / %d", static_cast<int>(n),
+                          static_cast<int>(seq.size()));
+            lines.push_back(buf);
+            lines.push_back("单击节点换起点 · 空格暂停 · S 停止");
+        } else if (algo == Algo::Flow) {
+            std::snprintf(buf, sizeof(buf), "最大流最小割    源 %d → 汇 %d", start_id(), sink_id());
+            lines.push_back(buf);
+
+            std::snprintf(buf, sizeof(buf), "最大流 = %d    割边容量和 = %d%s", flow.value,
+                          flow.cut_capacity,
+                          flow.cut_capacity == flow.value ? "（相等，正确）" : "（不相等，有问题）");
+            lines.push_back(buf);
+
+            if (flow_step == 0) {
+                lines.push_back("还没开始增广 ...");
+            } else if (!show_cut) {
+                const AugmentStep& st = flow.steps[flow_step - 1];
+                std::snprintf(buf, sizeof(buf), "第 %d / %d 次增广：%s    瓶颈 %d",
+                              static_cast<int>(flow_step), static_cast<int>(flow.steps.size()),
+                              path_text(st.path).c_str(), st.bottleneck);
+                lines.push_back(buf);
+            } else {
+                lines.push_back("最小割 S = { " + join_ids(flow.source_side) + "}    T = { " +
+                                join_ids(flow.sink_side) + "}");
+                std::string cut;
+                for (size_t i = 0; i < flow.cut_edges.size(); ++i) {
+                    if (i > 0) {
+                        cut += "  ";
+                    }
+                    cut += std::to_string(flow.cut_edges[i].first) + "→" +
+                           std::to_string(flow.cut_edges[i].second);
+                }
+                lines.push_back(cut.empty() ? std::string("割边：（没有）") : ("割边：" + cut));
+            }
+            lines.push_back("边上显示 流量/容量 · 单击换源点 · 右键换汇点");
+        }
+
+        // 量一下最宽的一行，面板宽度跟着文字走
+        std::vector<std::string> shown;
+        for (const std::string& s : lines) {
+            shown.push_back(gbk(s));
+        }
+        use_ui_font(17);
+        int w = 380;
+        for (const std::string& s : shown) {
+            w = std::max(w, textwidth(s.c_str()) + 32);
+        }
+        const int line_h = 26;
+        const int ph = 16 + line_h * static_cast<int>(shown.size()) + 14;
+        const int x0 = canvas.l + 16;
+        const int y0 = canvas.t + 16;
+
+        setfillcolor(C_PANEL);
+        setlinecolor(C_PANEL_LINE);
+        setlinestyle(PS_SOLID, 1);
+        fillroundrect(x0, y0, x0 + w, y0 + ph, 10, 10);
+
+        int y = y0 + 14;
+        for (size_t i = 0; i < shown.size(); ++i) {
+            settextcolor(i == 0 ? C_ACCENT : C_TEXT);
+            outtextxy(x0 + 16, y, shown[i].c_str());
+            y += line_h;
         }
     }
 
@@ -1436,6 +1934,18 @@ private:
             right += "    选中: 节点 " + std::to_string(nodes[selected_node].id);
         }
 
+        // 算法状态也放状态栏，随时能看到进度
+        if (algo == Algo::Bfs || algo == Algo::Dfs) {
+            right += std::string("    ") + (algo == Algo::Bfs ? "BFS" : "DFS") + " " +
+                     std::to_string(std::min(step, seq.size())) + " / " + std::to_string(seq.size());
+        } else if (algo == Algo::Flow) {
+            right += "    最大流 " + std::to_string(flow.value) + "（增广 " +
+                     std::to_string(flow_step) + " / " + std::to_string(flow.steps.size()) + "）";
+        }
+        if (algo != Algo::None && paused) {
+            right += "  已暂停";
+        }
+
         const std::string l = gbk(left);
         const std::string r = gbk(right);
         use_ui_font(16);
@@ -1475,13 +1985,19 @@ private:
             {"Shift + 滚轮",          "左右平移"},
             {"Ctrl + 滚轮",           "上下平移"},
             {"拖动右边 / 下边的滑块", "上下、左右浏览整张图"},
-            {"单击节点",              "选中节点，左上角显示它的邻接表"},
+            {"单击节点",              "选中节点（同时作为遍历起点 / 最大流的源点）"},
+            {"右键单击节点",          "把它设成最大流的汇点"},
+            {"B",                     "广度优先（BFS）遍历动画"},
+            {"D",                     "深度优先（DFS）遍历动画"},
+            {"M",                     "最大流最小割动画（边上显示 流量/容量）"},
+            {"空格",                  "暂停 / 继续动画"},
+            {"S",                     "停止动画"},
+            {"E",                     "显示 / 隐藏每个节点的度数"},
             {"F",                     "适应窗口：自动缩放到刚好放得下整张图"},
             {"0",                     "视图复位：缩放回到 100%，图回到中间"},
             {"+ / -",                 "放大 / 缩小"},
             {"R",                     "力导向布局（连在一起的节点会靠拢）"},
             {"C",                     "圆环布局"},
-            {"D",                     "显示 / 隐藏每个节点的度数"},
             {"Ctrl + O",              "打开图结构文件"},
             {"Ctrl + S",              "保存（Ctrl + Shift + S 另存为）"},
             {"Ctrl + P",              "把当前画面导出成 PNG 图片"},

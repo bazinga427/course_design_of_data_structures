@@ -185,18 +185,22 @@ bool Graph::save_to_file(const string& filename) const {
 // 遍历
 // ------------------------------------------------------------
 
-void Graph::dfs_util(int u, vector<bool>& visited, vector<int>& seq) const {
+void Graph::dfs_util(int u, vector<bool>& visited, vector<int>& seq,
+                     vector<int>* parent) const {
     visited[u] = true;
     seq.push_back(u);
 
     for (int v : adj_list[u]) {
         if (!visited[v]) {
-            dfs_util(v, visited, seq);
+            if (parent != nullptr) {
+                (*parent)[v] = u;               // v 是跟着 u 走过来的
+            }
+            dfs_util(v, visited, seq, parent);
         }
     }
 }
 
-vector<int> Graph::get_dfs_sequence(int start_node) const {
+vector<int> Graph::get_dfs_sequence(int start_node, vector<int>* parent) const {
     if (start_node < 1 || start_node > n) {
         cout << "[warn] start node " << start_node << " out of range 1.." << n << endl;
         return {};
@@ -204,11 +208,14 @@ vector<int> Graph::get_dfs_sequence(int start_node) const {
 
     vector<bool> visited(n + 1, false);
     vector<int> seq;
-    dfs_util(start_node, visited, seq);
+    if (parent != nullptr) {
+        parent->assign(n + 1, 0);
+    }
+    dfs_util(start_node, visited, seq, parent);
     return seq;
 }
 
-vector<int> Graph::get_bfs_sequence(int start_node) const {
+vector<int> Graph::get_bfs_sequence(int start_node, vector<int>* parent) const {
     if (start_node < 1 || start_node > n) {
         cout << "[warn] start node " << start_node << " out of range 1.." << n << endl;
         return {};
@@ -218,6 +225,9 @@ vector<int> Graph::get_bfs_sequence(int start_node) const {
     queue<int> q;
     vector<int> seq;
 
+    if (parent != nullptr) {
+        parent->assign(n + 1, 0);
+    }
     q.push(start_node);
     visited[start_node] = true;
 
@@ -229,6 +239,9 @@ vector<int> Graph::get_bfs_sequence(int start_node) const {
         for (int v : adj_list[u]) {
             if (!visited[v]) {
                 visited[v] = true;
+                if (parent != nullptr) {
+                    (*parent)[v] = u;           // v 是跟着 u 走过来的
+                }
                 q.push(v);
             }
         }

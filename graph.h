@@ -44,11 +44,12 @@ public:
     bool save_to_file(const std::string& filename) const;
 
     // ---------- 遍历 ----------
-    // 从 start_node 出发的深度优先遍历，返回访问序列
-    std::vector<int> get_dfs_sequence(int start_node) const;
+    // 从 start_node 出发的深度优先遍历，返回访问序列。
+    // parent 不为空时，顺便把"每个点是跟着谁走过来的"填进去（画动画要用来高亮走过的边）。
+    std::vector<int> get_dfs_sequence(int start_node, std::vector<int>* parent = nullptr) const;
 
-    // 从 start_node 出发的广度优先遍历，返回访问序列
-    std::vector<int> get_bfs_sequence(int start_node) const;
+    // 从 start_node 出发的广度优先遍历，返回访问序列（parent 的含义同上）
+    std::vector<int> get_bfs_sequence(int start_node, std::vector<int>* parent = nullptr) const;
 
     // 从 start_node 出发能走到的所有节点（连通块），结果已排序
     std::vector<int> reachable_from(int start_node) const;
@@ -70,7 +71,8 @@ public:
 
 private:
     // 递归的 DFS 辅助函数，只在类内部使用
-    void dfs_util(int u, std::vector<bool>& visited, std::vector<int>& seq) const;
+    void dfs_util(int u, std::vector<bool>& visited, std::vector<int>& seq,
+                  std::vector<int>* parent) const;
 
     // u 是否还有未访问的邻居（判别 DFS 序列用）
     bool has_unvisited_neighbor(int u, const std::vector<bool>& visited) const;
