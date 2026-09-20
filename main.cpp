@@ -1,5 +1,6 @@
 #include "graph.h"
 #include "flow.h"
+#include "ui.h"
 
 #include <iostream>
 #include <sstream>
@@ -9,16 +10,22 @@
 using namespace std;
 
 // ============================================================
-//  main.cpp 只负责"界面"：打印菜单、读输入、把活儿派给 Graph。
-//  具体的算法都在 graph.cpp 里，以后加最大流最小割、EasyX 画图，
-//  也是在菜单里加一项、再写一个 do_xxx 函数，不用动 main 的结构。
+//  main.cpp 只负责"界面"：打印菜单、读输入、把活儿派给各个模块。
+//
+//    算法     -> graph.cpp（建图 / 遍历 / 判别）、flow.cpp（最大流最小割）
+//    图形界面 -> ui.cpp + layout.cpp + graph_io.cpp（EasyX 窗口）
 //
 //  控制台输出一律用英文：Windows 控制台默认是 GBK，
 //  直接 cout 中文会变成乱码（注释用中文没有问题）。
+//  图形窗口里的中文由 ui.cpp 里的 gbk() 转换，不受影响。
 //
 //  输入约定：每个问题单独问一行，直接回车就是用括号里的默认值。
 //  Ctrl+Z 回车（或者把输入重定向到文件读完）会让程序正常退出。
 // ============================================================
+
+// 打开图形窗口时，先把菜单里这张图存到这个文件，再让窗口去读，
+// 这样窗口里画的就是菜单里正在操作的这张图（包括随机生成的、带容量的）。
+static const char* kViewFile = "view_graph.txt";
 
 // 读输入的结果：正常 / 格式不对 / 输入结束
 enum class ReadResult { Ok, Bad, Eof };
@@ -67,15 +74,16 @@ ReadResult read_int_list(const string& prompt, vector<int>& values) {
     return ReadResult::Ok;
 }
 
-void print_check_info(const Graph& g) {
-    cout << "Current graph: N = " << g.n << ", M = " << g.m << ", "
-         << (g.is_directed ? "directed" : "undirected") << endl;
+void print_graph_info(const Graph& g, const string& current_file) {
+    cout << " Current graph: N = " << g.n << ", M = " << g.m << ", "
+         << (g.is_directed ? "directed" : "undirected")
+         << "  [" << current_file << "]" << endl;
 }
 
-void print_menu(const Graph& g) {
+void print_menu(const Graph& g, const string& current_file) {
     cout << "\n==============================" << endl;
     cout << " Graph course design" << endl;
-    print_check_info(g);
+    print_graph_info(g, current_file);
     cout << "------------------------------" << endl;
     cout << " 1. Load graph from a file" << endl;
     cout << " 2. Generate a random graph" << endl;
@@ -86,6 +94,7 @@ void print_menu(const Graph& g) {
     cout << " 7. Check a DFS / BFS sequence" << endl;
     cout << " 8. Save current graph to a file" << endl;
     cout << " 9. Max flow / min cut (Ford-Fulkerson)" << endl;
+    cout << "10. Open the EasyX window (graph view)" << endl;
     cout << " 0. Exit" << endl;
     cout << "==============================" << endl;
 }
@@ -101,17 +110,17 @@ void print_sequence(const vector<int>& seq) {
 
 // 下面每个 do_xxx 返回 false 表示输入结束了，main 该退出了。
 
-bool do_load(Graph& g) {
+bool do_load(Graph& g, string& current_file) {
     string name;
     ReadResult r = read_line("File name (default graph.txt): ", name);
     if (r == ReadResult::Eof) return false;
     if (name.empty()) name = "graph.txt";
 
-    g.build_from_file(name);
+    if (g.build_from_file(name)) current_file = name;
     return true;
 }
 
-bool do_random(Graph& g) {
+bool do_random(Graph& g, string& current_file) {
     int n = 0, m = 0, directed = 1, seed = 0;
 
     ReadResult r = read_int("Node count n (>= 2): ", n);
@@ -132,6 +141,7 @@ bool do_random(Graph& g) {
     if (r != ReadResult::Ok) return r == ReadResult::Bad;
 
     g.build_random(n, m, directed != 0, seed < 0 ? 0u : static_cast<unsigned>(seed));
+    current_file = "(random graph, not saved yet)";
     return true;
 }
 
@@ -195,16 +205,32 @@ bool do_max_flow(const Graph& g) {
     return true;
 }
 
-int main() {
+// 打开图形窗口：先把当前这张图存成文件，再让窗口去读，
+// 这样窗口里画的就是菜单里正在操作的图（随机生成的图也能看到）。
+void do_open_window(const Graph& g) {
+    g.save_to_file(kViewFile);
+    cout << "Opening the EasyX window ... (press Esc in the window to come back)" << endl;
+    run_graph_ui(kViewFile);
+    cout << "Window closed, back to the console menu." << endl;
+}
+
+int main(int argc, char* argv[]) {
     Graph g(true);
+    string current_file = "graph.txt";
+
+    // 带参数可以直接进图形窗口（build.bat 最后一行就是用 main.exe 1 打开的）
+    if (argc > 1 && string(argv[1]) == "1") {
+        run_graph_ui();
+        return 0;
+    }
 
     // 启动时先读一张示例图，这样一进来菜单里就有点东西可以看
     cout << "Loading graph.txt ..." << endl;
-    g.build_from_file("graph.txt");
+    if (!g.build_from_file("graph.txt")) current_file = "(no graph)";
     cout << "Use option 1 or 2 if you want another graph." << endl;
 
     while (true) {
-        print_menu(g);
+        print_menu(g, current_file);
 
         int choice = -1;
         ReadResult r = read_int("Select: ", choice);
@@ -213,8 +239,8 @@ int main() {
 
         bool keep_running = true;
         switch (choice) {
-            case 1: keep_running = do_load(g); break;
-            case 2: keep_running = do_random(g); break;
+            case 1: keep_running = do_load(g, current_file); break;
+            case 2: keep_running = do_random(g, current_file); break;
             case 3:
                 g.print_adj_list();
                 break;
@@ -226,6 +252,7 @@ int main() {
             case 7: keep_running = do_check_sequence(g); break;
             case 8: keep_running = do_save(g); break;
             case 9: keep_running = do_max_flow(g); break;
+            case 10: do_open_window(g); break;
             case 0:
                 cout << "Bye." << endl;
                 return 0;

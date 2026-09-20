@@ -9,3 +9,8 @@
 
 # 构建输出目录（如果以后改用 build 目录放产物）
 build/
+
+# 程序运行时生成的图文件和布局坐标（不是源码）
+view_graph.txt
+saved_graph.txt
+*.layout
