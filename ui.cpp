@@ -123,8 +123,9 @@ double clampd(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
 
-// 源文件是 UTF-8，EasyX（非 Unicode 版）按 GBK 显示文字，
-// 所以中文要先转成 GBK 再交给 outtextxy / settextstyle，不然是乱码。
+// 窗口里只显示 ASCII：所有中文标签都换成了英文，
+// 这样就不会再出现 EasyX 画不出来的方块和乱码。
+// 下面这个 gbk() 留在原地，万一以后又要画中文，走它就不会乱。
 std::string gbk(const std::string& utf8) {
     bool ascii = true;
     for (unsigned char c : utf8) {
@@ -153,7 +154,7 @@ std::string gbk(const std::string& utf8) {
     return out;
 }
 
-// 界面用中文字体，数字用等宽字体，看着清楚
+// 界面用中文字体（英文字形也有），数字用等宽字体，看着清楚
 void use_ui_font(int height) {
     static const std::string face = gbk("微软雅黑");
     settextstyle(height, 0, face.c_str());
@@ -214,10 +215,10 @@ bool dialog_open(std::string& path) {
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = GetHWnd();
-    ofn.lpstrFilter = L"图结构文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFilter = L"Graph files (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = L"打开图结构文件";
+    ofn.lpstrTitle = L"Open graph file";
     ofn.lpstrDefExt = L"txt";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
 
@@ -240,10 +241,10 @@ bool dialog_save(std::string& path, const std::string& default_name) {
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = GetHWnd();
-    ofn.lpstrFilter = L"图结构文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFilter = L"Graph files (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
     ofn.lpstrFile = buffer;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = L"保存图结构文件";
+    ofn.lpstrTitle = L"Save graph file";
     ofn.lpstrDefExt = L"txt";
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_EXPLORER;
 
@@ -277,7 +278,7 @@ enum ButtonId {
 };
 
 struct Button {
-    std::string label;   // 已经转成 GBK 的显示文字
+    std::string label;   // 按钮上显示的文字（ASCII）
     int id = 0;
     Rect r;
 };
@@ -410,22 +411,23 @@ private:
     }
 
     void build_buttons() {
+        // 按钮文字全部用英文（ASCII），窗口里不出现任何中文
         static const struct { int id; const char* text; } kDefs[] = {
-            {BTN_OPEN,   "打开"},
-            {BTN_SAVE,   "保存"},
-            {BTN_SHOT,   "导出图片"},
-            {BTN_FIT,    "适应窗口"},
-            {BTN_ZIN,    "放大"},
-            {BTN_ZOUT,   "缩小"},
-            {BTN_FORCE,  "力导向"},
-            {BTN_CIRCLE, "圆环"},
-            {BTN_BFS,    "BFS 遍历"},
-            {BTN_DFS,    "DFS 遍历"},
-            {BTN_FLOW,   "最大流"},
-            {BTN_RESID,  "残量网络"},
-            {BTN_STEP,   "单步"},
-            {BTN_STOP,   "停止"},
-            {BTN_HELP,   "帮助"},
+            {BTN_OPEN,   "Open"},
+            {BTN_SAVE,   "Save"},
+            {BTN_SHOT,   "Export"},
+            {BTN_FIT,    "Fit"},
+            {BTN_ZIN,    "Zoom+"},
+            {BTN_ZOUT,   "Zoom-"},
+            {BTN_FORCE,  "Force"},
+            {BTN_CIRCLE, "Circle"},
+            {BTN_BFS,    "BFS"},
+            {BTN_DFS,    "DFS"},
+            {BTN_FLOW,   "MaxFlow"},
+            {BTN_RESID,  "Residual"},
+            {BTN_STEP,   "Step"},
+            {BTN_STOP,   "Stop"},
+            {BTN_HELP,   "Help"},
         };
 
         buttons.clear();
@@ -435,7 +437,7 @@ private:
         for (const auto& def : kDefs) {
             Button b;
             b.id = def.id;
-            b.label = gbk(def.text);
+            b.label = def.text;
             const int w = textwidth(b.label.c_str()) + 28;
             b.r.l = x;
             b.r.t = 11;
@@ -681,7 +683,7 @@ private:
             } else if (canvas.contains(mouse_x, mouse_y)) {
                 const int i = node_at(mouse_x, mouse_y);
                 sink_node = i;
-                set_toast("汇点 = 节点 " + std::to_string(nodes[i].id) + "（按 M 或点「最大流」）");
+                set_toast("sink = node " + std::to_string(nodes[i].id) + "   (press M or click MaxFlow)");
             }
             break;
 
@@ -866,7 +868,7 @@ private:
         case 'P': do_export_image(); break;
         case 'E':
             show_degree = !show_degree;
-            set_toast(show_degree ? "已显示每个节点的度数" : "已隐藏节点的度数");
+            set_toast(show_degree ? "degree labels: on" : "degree labels: off");
             break;
         case 'B': start_traversal(true); break;      // 广度优先遍历动画
         case 'D': start_traversal(false); break;     // 深度优先遍历动画
@@ -878,7 +880,7 @@ private:
             if (algo != Algo::None) {
                 paused = !paused;
                 next_tick = GetTickCount() + interval_ms;
-                set_toast(paused ? "动画已暂停（再按空格继续）" : "继续播放");
+                set_toast(paused ? "paused (press Space to resume)" : "playing");
             }
             break;
         case 'H': show_help = !show_help; break;
@@ -937,7 +939,7 @@ private:
 
         if (path.empty()) {
             auto_layout();
-            set_toast("没有找到图文件：点「打开图文件」选一个");
+            set_toast("no graph file found: click Open to pick one");
             return;
         }
         load_from(path);
@@ -954,7 +956,7 @@ private:
     void load_from(const std::string& path) {
         std::string error;
         if (!graph_io::load_graph(g, path, error)) {
-            set_toast("打开失败：" + error);
+            set_toast("open failed: " + error);
             return;
         }
 
@@ -983,11 +985,11 @@ private:
         if (graph_io::load_layout(path, saved)) {
             nodes = saved;
             fit_view();
-            set_toast("已打开 " + base_name(path) + "（并恢复了上次的节点位置）");
+            set_toast("opened " + base_name(path) + "   (restored the saved node positions)");
         } else {
             auto_layout();
-            set_toast("已打开 " + base_name(path) + "：节点 " + std::to_string(nodes.size()) +
-                      " 个，边 " + std::to_string(edges.size()) + " 条");
+            set_toast("opened " + base_name(path) + ": " + std::to_string(nodes.size()) +
+                      " nodes, " + std::to_string(edges.size()) + " edges");
         }
     }
 
@@ -1002,7 +1004,7 @@ private:
 
         std::string error;
         if (!graph_io::save_graph(g, path, error)) {
-            set_toast("保存失败：" + error);
+            set_toast("save failed: " + error);
             return;
         }
 
@@ -1011,15 +1013,15 @@ private:
 
         // 顺便把节点坐标存下来，下次打开位置就还是这个样子
         const bool layout_ok = graph_io::save_layout(path, nodes);
-        set_toast(std::string(overwrite ? "已保存：" : "已另存为：") + base_name(path) +
-                  (layout_ok ? "（节点坐标存在同名 .layout 文件里）" : ""));
+        set_toast(std::string(overwrite ? "saved: " : "saved as: ") + base_name(path) +
+                  (layout_ok ? "   (node positions written to the .layout file)" : ""));
     }
 
     // 把当前画面存成 PNG：写课程设计报告时可以直接贴图，不用另外截图
     void do_export_image() {
         const std::string path = file_path.empty() ? std::string("graph_ui.png") : (file_path + ".png");
         saveimage(path.c_str());        // EasyX 自带的存图函数，传 NULL 表示存整个窗口
-        set_toast("已把当前画面存成图片：" + base_name(path));
+        set_toast("image saved: " + base_name(path));
     }
 
     int force_iterations() const {
@@ -1050,16 +1052,16 @@ private:
 
     void do_force_layout() {
         if (nodes.empty()) {
-            set_toast("还没有打开图，先点「打开图文件」");
+            set_toast("no graph loaded yet: click Open");
             return;
         }
         if (static_cast<int>(nodes.size()) > SOFT_MAX_NODES) {
             layout_circle(nodes);
-            set_toast("节点太多（超过 800 个），改用圆环布局");
+            set_toast("more than 800 nodes: falling back to circle layout");
         } else {
             layout_force(nodes, g, force_iterations());
             layout_normalize(nodes, layout_radius());
-            set_toast("已按「力导向」算法重新布局：相连的节点会自动靠在一起");
+            set_toast("force-directed layout applied");
         }
         rebuild_index();
         fit_view();
@@ -1067,14 +1069,14 @@ private:
 
     void do_circle_layout() {
         if (nodes.empty()) {
-            set_toast("还没有打开图，先点「打开图文件」");
+            set_toast("no graph loaded yet: click Open");
             return;
         }
         layout_circle(nodes);
         layout_normalize(nodes, layout_radius());
         rebuild_index();
         fit_view();
-        set_toast("已按「圆环」方式重新布局");
+        set_toast("circle layout applied");
     }
 
     // 节点编号 -> 下标、每个点的度数，都在这里一次性算好
@@ -1145,7 +1147,7 @@ private:
             return;
         }
         clear_algorithm();
-        set_toast("已停止动画");
+        set_toast("animation stopped");
     }
 
     // 边上显示什么：
@@ -1154,8 +1156,8 @@ private:
     void toggle_residual_mode() {
         residual_mode = !residual_mode;
         set_toast(residual_mode
-                      ? "边上显示残量网络：正向还能加多少 / 反向能撤多少，橙色虚线就是反向边"
-                      : "边上显示 流量/容量");
+                      ? "edge labels: residual network (orange dashed = reverse edge)"
+                      : "edge labels: flow / capacity");
     }
 
     std::string path_text(const std::vector<int>& path) const {
@@ -1163,7 +1165,7 @@ private:
         for (size_t i = 0; i < path.size(); ++i) {
             s += std::to_string(path[i]);
             if (i + 1 < path.size()) {
-                s += "→";
+                s += "->";
             }
         }
         return s;
@@ -1172,7 +1174,7 @@ private:
     // 开始一次遍历动画（bfs = true 是广度优先，false 是深度优先）
     void start_traversal(bool bfs) {
         if (nodes.empty()) {
-            set_toast("还没有打开图，先点「打开」");
+            set_toast("no graph loaded yet: click Open");
             return;
         }
 
@@ -1180,7 +1182,7 @@ private:
         parent.assign(g.n + 1, 0);
         seq = bfs ? g.get_bfs_sequence(s, &parent) : g.get_dfs_sequence(s, &parent);
         if (seq.empty()) {
-            set_toast("起点 " + std::to_string(s) + " 不在这张图里");
+            set_toast("start node " + std::to_string(s) + " is not in this graph");
             return;
         }
 
@@ -1193,21 +1195,21 @@ private:
         paused = false;
         interval_ms = 600;            // 自动播放的节奏（嫌快就按 N 单步）
         next_tick = GetTickCount() + interval_ms;
-        set_toast(std::string(bfs ? "BFS" : "DFS") + " 从节点 " + std::to_string(s) +
-                  " 开始，一共会访问 " + std::to_string(seq.size()) + " 个节点");
+        set_toast(std::string(bfs ? "BFS" : "DFS") + " from node " + std::to_string(s) +
+                  ": will visit " + std::to_string(seq.size()) + " nodes");
     }
 
     // 开始最大流最小割：源点 = 选中的节点，汇点 = 右键点过的节点
     void start_flow() {
         if (nodes.empty()) {
-            set_toast("还没有打开图，先点「打开」");
+            set_toast("no graph loaded yet: click Open");
             return;
         }
 
         const int s = start_id();
         const int t = sink_id();
         if (s == t) {
-            set_toast("源点和汇点不能是同一个点：先单击源点，再右键单击汇点");
+            set_toast("source and sink must differ: left-click source, right-click sink");
             return;
         }
 
@@ -1223,10 +1225,12 @@ private:
 
         if (flow.steps.empty()) {
             show_cut = true;          // 一次都推不动：直接把割显示出来
-            set_toast("最大流 = 0：从节点 " + std::to_string(s) + " 走不到节点 " + std::to_string(t));
+            set_toast("max flow = 0: node " + std::to_string(s) + " cannot reach node " +
+                      std::to_string(t));
         } else {
-            set_toast("Ford-Fulkerson：源 " + std::to_string(s) + " → 汇 " + std::to_string(t) +
-                      "，一共 " + std::to_string(flow.steps.size()) + " 次增广");
+            set_toast("Ford-Fulkerson: source " + std::to_string(s) + " -> sink " +
+                      std::to_string(t) + ", " + std::to_string(flow.steps.size()) +
+                      " augmentations");
         }
     }
 
@@ -1247,7 +1251,7 @@ private:
     // 之后要再点一下「单步」才会走下一步（按空格可以回到自动播放）
     void step_forward() {
         if (algo == Algo::None) {
-            set_toast("先按 B / D / M 开始一个演示，然后再单步");
+            set_toast("press B / D / M to start a demo, then use Step");
             return;
         }
 
@@ -1255,7 +1259,7 @@ private:
                                 ? (step >= seq.size())
                                 : (flow_step >= flow.steps.size());
         if (at_end) {
-            set_toast("已经到最后一步了");
+            set_toast("already at the last step");
             return;
         }
 
@@ -1273,7 +1277,7 @@ private:
             }
             ++step;
             if (step == seq.size()) {
-                set_toast(std::string(algo == Algo::Bfs ? "BFS" : "DFS") + " 遍历完成： " +
+                set_toast(std::string(algo == Algo::Bfs ? "BFS" : "DFS") + " done: " +
                           path_text(seq));
             }
             return;
@@ -1297,11 +1301,11 @@ private:
 
         if (flow_step == flow.steps.size()) {
             show_cut = true;
-            set_toast("最大流 = " + std::to_string(flow.value) + "，割边容量和 = " +
-                      std::to_string(flow.cut_capacity) + "（两个相等才是对的，最小割已标红）");
+            set_toast("max flow = " + std::to_string(flow.value) + ", cut capacity = " +
+                      std::to_string(flow.cut_capacity) + "   (min cut marked in red)");
         } else {
-            set_toast("第 " + std::to_string(flow_step) + " 次增广： " + path_text(st.path) +
-                      "，瓶颈 " + std::to_string(st.bottleneck));
+            set_toast("augmentation " + std::to_string(flow_step) + ": " + path_text(st.path) +
+                      ", bottleneck " + std::to_string(st.bottleneck));
         }
     }
 
@@ -1617,7 +1621,7 @@ private:
             draw_arrow(r2, -ux, -uy, C_REV);
 
             char rbuf[32];
-            std::snprintf(rbuf, sizeof(rbuf), "反向（能撤 %d）", edge_cancel(id_a, id_b));
+            std::snprintf(rbuf, sizeof(rbuf), "rev %d", edge_cancel(id_a, id_b));
             use_num_font(13);
             const int rw = textwidth(rbuf);
             settextcolor(C_REV);
@@ -1628,10 +1632,10 @@ private:
         char buf[48];
         if (residual_mode) {
             // 正向残留 = 还能再加多少；能撤 = 反向边有多少容量
-            std::snprintf(buf, sizeof(buf), "残 %d / 撤 %d", edge_residual(id_a, id_b),
+            std::snprintf(buf, sizeof(buf), "res %d / rev %d", edge_residual(id_a, id_b),
                           edge_cancel(id_a, id_b));
         } else {
-            std::snprintf(buf, sizeof(buf), "流 %d / 容 %d", f, cap);
+            std::snprintf(buf, sizeof(buf), "flow %d / cap %d", f, cap);
         }
         use_num_font(14);
         const int tw = textwidth(buf);
@@ -1855,15 +1859,15 @@ private:
         char buf[256];
 
         if (algo == Algo::Bfs || algo == Algo::Dfs) {
-            std::snprintf(buf, sizeof(buf), "%s 遍历    起点 %d",
+            std::snprintf(buf, sizeof(buf), "%s order    start %d",
                           algo == Algo::Bfs ? "BFS" : "DFS", start_id());
             lines.push_back(buf);
 
             const size_t n = std::min(step, seq.size());
             const size_t kMaxShow = 16;
-            std::string order = "访问顺序：";
+            std::string order = "visit order: ";
             if (n == 0) {
-                order += "（还没开始）";
+                order += "(not started)";
             } else {
                 const size_t show = std::min(n, kMaxShow);
                 order += path_text(std::vector<int>(seq.begin(), seq.begin() + show));
@@ -1873,24 +1877,26 @@ private:
             }
             lines.push_back(order);
 
-            std::snprintf(buf, sizeof(buf), "进度 %d / %d", static_cast<int>(n),
+            std::snprintf(buf, sizeof(buf), "step %d / %d", static_cast<int>(n),
                           static_cast<int>(seq.size()));
             lines.push_back(buf);
-            lines.push_back("单击节点换起点 · N 单步 · 空格自动播放 · S 停止");
+            lines.push_back("click node = start | N step | Space auto-play | S stop");
         } else if (algo == Algo::Flow) {
-            std::snprintf(buf, sizeof(buf), "最大流最小割    源 %d → 汇 %d", start_id(), sink_id());
+            std::snprintf(buf, sizeof(buf), "max-flow / min-cut    source %d -> sink %d",
+                          start_id(), sink_id());
             lines.push_back(buf);
 
-            std::snprintf(buf, sizeof(buf), "最大流 = %d    割边容量和 = %d%s", flow.value,
+            std::snprintf(buf, sizeof(buf), "max flow = %d    cut capacity = %d%s", flow.value,
                           flow.cut_capacity,
-                          flow.cut_capacity == flow.value ? "（相等，正确）" : "（不相等，有问题）");
+                          flow.cut_capacity == flow.value ? "  (equal - correct)"
+                                                          : "  (NOT equal - check it)");
             lines.push_back(buf);
 
             if (flow_step == 0) {
-                lines.push_back("还没开始增广 ...");
+                lines.push_back("no augmentation yet ...");
             } else {
                 const AugmentStep& st = flow.steps[flow_step - 1];
-                std::snprintf(buf, sizeof(buf), "第 %d / %d 次增广：%s    瓶颈 %d",
+                std::snprintf(buf, sizeof(buf), "augmentation %d / %d: %s    bottleneck %d",
                               static_cast<int>(flow_step), static_cast<int>(flow.steps.size()),
                               path_text(st.path).c_str(), st.bottleneck);
                 lines.push_back(buf);
@@ -1906,7 +1912,7 @@ private:
                     const int f_after = edge_residual(u, v);
                     const int r_after = edge_residual(v, u);
                     char line2[200];
-                    std::snprintf(line2, sizeof(line2), "   %d→%d：残量 %d→%d，反向边 %d→%d", u, v,
+                    std::snprintf(line2, sizeof(line2), "   %d->%d: residual %d->%d, reverse %d->%d", u, v,
                                   f_after + st.bottleneck, f_after, r_after - st.bottleneck,
                                   r_after);
                     lines.push_back(line2);
@@ -1914,22 +1920,24 @@ private:
                 }
 
                 if (show_cut) {
-                    lines.push_back("最小割 S = { " + join_ids(flow.source_side) + "}    T = { " +
+                    lines.push_back("min cut  S = { " + join_ids(flow.source_side) + "}    T = { " +
                                     join_ids(flow.sink_side) + "}");
                     std::string cut;
                     for (size_t i = 0; i < flow.cut_edges.size(); ++i) {
                         if (i > 0) {
                             cut += "  ";
                         }
-                        cut += std::to_string(flow.cut_edges[i].first) + "→" +
+                        cut += std::to_string(flow.cut_edges[i].first) + "->" +
                                std::to_string(flow.cut_edges[i].second);
                     }
-                    lines.push_back(cut.empty() ? std::string("割边：（没有）") : ("割边：" + cut));
+                    lines.push_back(cut.empty() ? std::string("cut edges: (none)")
+                                                : ("cut edges: " + cut));
                 }
             }
-            lines.push_back(std::string("边上显示 ") +
-                            (residual_mode ? "残留网络（V 换成流量/容量）" : "流量/容量（V 换成残留网络）") +
-                            " · N 单步 · 单击换源点 · 右键换汇点");
+            lines.push_back(std::string("edge labels: ") +
+                            (residual_mode ? "residual network (V = flow/capacity)"
+                                           : "flow/capacity (V = residual network)") +
+                            " | N step | left-click = source | right-click = sink");
         }
 
         // 量一下最宽的一行，面板宽度跟着文字走
@@ -1975,18 +1983,18 @@ private:
         std::vector<std::string> lines;
         char buf[160];
         if (directed) {
-            std::snprintf(buf, sizeof(buf), "节点 %d    出度 %d · 入度 %d",
+            std::snprintf(buf, sizeof(buf), "node %d    out-degree %d, in-degree %d",
                           id, degree_[idx], in_degree_[idx]);
         } else {
-            std::snprintf(buf, sizeof(buf), "节点 %d    度 %d", id, degree_[idx]);
+            std::snprintf(buf, sizeof(buf), "node %d    degree %d", id, degree_[idx]);
         }
         lines.push_back(buf);
 
-        std::string list = "邻接表 ";
+        std::string list = "adj list ";
         list += std::to_string(id);
-        list += " → ";
+        list += " -> ";
         if (neigh.empty()) {
-            list += directed ? "（没有出边）" : "（没有邻居）";
+            list += directed ? "(no outgoing edges)" : "(no neighbours)";
         } else {
             const size_t show = std::min<size_t>(neigh.size(), 16);
             for (size_t k = 0; k < show; ++k) {
@@ -2089,21 +2097,22 @@ private:
         setlinestyle(PS_SOLID, 1);
         line(status.l, status.t, status.r - 1, status.t);
 
-        std::string left = "文件: ";
-        left += file_path.empty() ? std::string("（未打开）") : base_name(file_path);
+        std::string left = "file: ";
+        left += file_path.empty() ? std::string("(not opened)") : base_name(file_path);
         if (!nodes.empty()) {
-            left += "    节点 " + std::to_string(nodes.size()) + " · 边 " + std::to_string(edges.size()) +
-                    " · " + (directed ? "有向图" : "无向图") +
-                    "    " + (zero_based ? "0 开始编号" : "1 开始编号");
+            left += "    nodes " + std::to_string(nodes.size()) + " / edges " +
+                    std::to_string(edges.size()) +
+                    " / " + (directed ? "directed" : "undirected") +
+                    "    " + (zero_based ? "0-based" : "1-based");
         }
 
         char zoom[64];
-        std::snprintf(zoom, sizeof(zoom), "缩放 %.0f%%", scale * 100.0);
+        std::snprintf(zoom, sizeof(zoom), "zoom %.0f%%", scale * 100.0);
         std::string right = zoom;
         if (hover_node >= 0) {
-            right += "    鼠标: 节点 " + std::to_string(nodes[hover_node].id);
+            right += "    hover: node " + std::to_string(nodes[hover_node].id);
         } else if (selected_node >= 0) {
-            right += "    选中: 节点 " + std::to_string(nodes[selected_node].id);
+            right += "    selected: node " + std::to_string(nodes[selected_node].id);
         }
 
         // 算法状态也放状态栏，随时能看到进度
@@ -2111,15 +2120,15 @@ private:
             right += std::string("    ") + (algo == Algo::Bfs ? "BFS" : "DFS") + " " +
                      std::to_string(std::min(step, seq.size())) + " / " + std::to_string(seq.size());
         } else if (algo == Algo::Flow) {
-            right += "    最大流 " + std::to_string(flow.value) + "（增广 " +
-                     std::to_string(flow_step) + " / " + std::to_string(flow.steps.size()) + "）";
+            right += "    max flow " + std::to_string(flow.value) + " (aug " +
+                     std::to_string(flow_step) + " / " + std::to_string(flow.steps.size()) + ")";
         }
         if (algo != Algo::None && paused) {
-            right += "  已暂停（N 单步 / 空格继续）";
+            right += "   paused (N step / Space resume)";
         }
 
-        const std::string l = gbk(left);
-        const std::string r = gbk(right);
+        const std::string l = left;
+        const std::string r = right;
         use_ui_font(16);
 
         settextcolor(C_TEXT_DIM);
@@ -2141,17 +2150,17 @@ private:
             const char* text;
         };
         const Row rows[] = {
-            {C_PIPE,      false, "管子粗细 = 这条边的容量"},
-            {C_FLOW,      false, "绿色 = 已经流过去（还有余量）"},
-            {C_FLOW_FULL, false, "橙色 = 这条边流满了"},
-            {C_REV,       true,  "橙色虚线 = 反向边（能撤销的流量）"},
-            {C_EDGE_CUT,  false, "红色 = 最小割的割边"},
+            {C_PIPE,      false, "pipe width = capacity of this edge"},
+            {C_FLOW,      false, "green = flow pushed so far (capacity left)"},
+            {C_FLOW_FULL, false, "orange = this edge is saturated"},
+            {C_REV,       true,  "orange dashed = reverse edge (flow that can be cancelled)"},
+            {C_EDGE_CUT,  false, "red = edge of the min cut"},
         };
 
         use_ui_font(15);
         int w = 210;
         for (const Row& r : rows) {
-            w = std::max(w, textwidth(gbk(r.text).c_str()) + 56);
+            w = std::max(w, textwidth(r.text) + 56);
         }
 
         const int line_h = 24;
@@ -2172,7 +2181,7 @@ private:
 
             settextcolor(C_TEXT);
             use_ui_font(15);
-            const std::string t = gbk(r.text);
+            const std::string t = r.text;
             outtextxy(x0 + 44, y - textheight(t.c_str()) / 2, t.c_str());
             y += line_h;
         }
@@ -2182,7 +2191,7 @@ private:
         if (toast_text.empty() || GetTickCount() >= toast_time) {
             return;
         }
-        const std::string t = gbk(toast_text);
+        const std::string t = toast_text;
         use_ui_font(17);
 
         const int tw = textwidth(t.c_str());
@@ -2200,34 +2209,34 @@ private:
 
     void draw_help() {
         static const char* kRows[][2] = {
-            {"鼠标左键按住节点",      "拖动这个节点的位置"},
-            {"鼠标左键按住空白处",    "平移整张图（按住右键拖动也可以）"},
-            {"鼠标滚轮",              "以光标为中心放大 / 缩小"},
-            {"Shift + 滚轮",          "左右平移"},
-            {"Ctrl + 滚轮",           "上下平移"},
-            {"拖动右边 / 下边的滑块", "上下、左右浏览整张图"},
-            {"单击节点",              "选中节点（同时作为遍历起点 / 最大流的源点）"},
-            {"右键单击节点",          "把它设成最大流的汇点"},
-            {"B",                     "广度优先（BFS）遍历动画"},
-            {"D",                     "深度优先（DFS）遍历动画"},
-            {"M",                     "最大流最小割动画（边上显示 流量/容量）"},
-            {"N / 「单步」",          "点一下走一步（会自动停下来，节奏完全由你控制）"},
-            {"V / 「残量网络」",      "边上显示残量网络：正向还能加多少、反向能撤多少"},
-            {"空格",                  "暂停 / 继续自动播放"},
-            {"S",                     "停止动画"},
-            {"E",                     "显示 / 隐藏每个节点的度数"},
-            {"F",                     "适应窗口：自动缩放到刚好放得下整张图"},
-            {"0",                     "视图复位：缩放回到 100%，图回到中间"},
-            {"+ / -",                 "放大 / 缩小"},
-            {"R",                     "力导向布局（连在一起的节点会靠拢）"},
-            {"C",                     "圆环布局"},
-            {"Ctrl + O",              "打开图结构文件"},
-            {"Ctrl + S",              "保存（Ctrl + Shift + S 另存为）"},
-            {"Ctrl + P",              "把当前画面导出成 PNG 图片"},
-            {"P",                     "同 Ctrl + P，导出当前画面"},
+            {"drag a node",             "move that node"},
+            {"drag empty space",        "pan the whole graph (right-drag works too)"},
+            {"mouse wheel",             "zoom in / out around the cursor"},
+            {"Shift + wheel",           "pan left / right"},
+            {"Ctrl + wheel",            "pan up / down"},
+            {"drag right / bottom bar", "browse the whole graph"},
+            {"left-click a node",       "select it (traversal start / flow source)"},
+            {"right-click a node",      "make it the sink of the max-flow"},
+            {"B",                       "breadth-first (BFS) traversal animation"},
+            {"D",                       "depth-first (DFS) traversal animation"},
+            {"M",                       "max-flow / min-cut animation"},
+            {"N / Step",                "one step at a time (pauses automatically)"},
+            {"V / Residual",            "residual labels: pushable / cancellable"},
+            {"Space",                   "pause / resume auto-play"},
+            {"S",                       "stop the animation"},
+            {"E",                       "show / hide the degree of every node"},
+            {"F",                       "fit: zoom so the whole graph just fits"},
+            {"0",                       "reset view: 100% zoom, graph centred"},
+            {"+ / -",                   "zoom in / out"},
+            {"R",                       "force-directed layout: connected nodes attract"},
+            {"C",                       "circle layout"},
+            {"Ctrl + O",                "open a graph file"},
+            {"Ctrl + S",                "save (Ctrl + Shift + S = save as)"},
+            {"Ctrl + P",                "export the current view as a PNG image"},
+            {"P",                       "same as Ctrl + P, export the current view"},
         };
 
-        const int pw = 660;
+        const int pw = 760;
         const int ph = 96 + 26 * static_cast<int>(sizeof(kRows) / sizeof(kRows[0]));
         const int x0 = (canvas.l + canvas.r) / 2 - pw / 2;
         const int y0 = (canvas.t + canvas.b) / 2 - ph / 2;
@@ -2239,18 +2248,18 @@ private:
 
         use_ui_font(22);
         settextcolor(C_TEXT);
-        const std::string title = gbk("操作说明");
+        const std::string title = "Help";
         outtextxy(x0 + 26, y0 + 18, title.c_str());
 
         use_ui_font(15);
         settextcolor(C_TEXT_DIM);
-        const std::string sub = gbk("按 H 或 Esc 关闭这个面板");
+        const std::string sub = "press H or Esc to close this panel";
         outtextxy(x0 + pw - 26 - textwidth(sub.c_str()), y0 + 26, sub.c_str());
 
         int y = y0 + 68;
         for (const auto& row : kRows) {
-            const std::string key = gbk(row[0]);
-            const std::string desc = gbk(row[1]);
+            const std::string key = row[0];
+            const std::string desc = row[1];
             settextcolor(C_ACCENT);
             outtextxy(x0 + 30, y, key.c_str());
             settextcolor(C_TEXT);

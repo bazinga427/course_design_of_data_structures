@@ -1,31 +1,41 @@
 @echo off
-rem 编译整个项目，生成 main.exe。直接双击本文件即可。
 setlocal
 cd /d "%~dp0"
 
-rem 优先用这台机器上装好的那份 MinGW；找不到就退回 PATH 里的 g++，
-rem 换电脑时改这一行即可。不用直接写 g++ 是因为 PATH 里可能先撞上
-rem Dev-Cpp / MSYS2 的旧编译器，链接 EasyX 时会报一堆看不懂的错。
-set "MINGW_GXX=D:\soft\mingw64\bin\g++.exe"
-if not exist "%MINGW_GXX%" set "MINGW_GXX=g++"
+rem ---------------------------------------------------------------
+rem Build the whole project -> main.exe
+rem KEEP THIS FILE PURE ASCII WITH CRLF LINE ENDINGS.
+rem cmd.exe reads .bat files using the OEM code page (936/GBK here).
+rem UTF-8 Chinese comments break line and command boundaries there,
+rem so rem-lines get executed and the window closes on an error.
+rem ---------------------------------------------------------------
 
-"%MINGW_GXX%" --version >nul 2>nul
-if errorlevel 1 (
-    echo Cannot find a working g++.
-    echo Install 64-bit MinGW-w64 and add its bin folder to PATH, or fix MINGW_GXX in this file.
+rem Prefer the compiler you installed; otherwise take the one in PATH.
+set "MINGW_GXX=D:\soft\mingw64\bin\g++.exe"
+if not exist "%MINGW_GXX%" set "MINGW_GXX="
+
+if not defined MINGW_GXX for /f "delims=" %%i in ('where g++ 2^>nul') do if not defined MINGW_GXX set "MINGW_GXX=%%i"
+
+if not defined MINGW_GXX (
+    echo Cannot find g++.
+    echo Install 64-bit MinGW-w64 and add its bin folder to PATH,
+    echo or fix MINGW_GXX at the top of this file.
     pause
     exit /b 1
 )
 
-rem UCRT 版的 MinGW 链接 libeasyx.a 时缺 __imp___iob_func，需要这个补丁文件；
-rem msvcrt 版（比如 TDM-GCC）不需要它。文件不在就跳过，不影响编译。
-set "COMPAT="
-if exist "tools\easyx_ucrt_compat.c" set "COMPAT=tools/easyx_ucrt_compat.c"
+"%MINGW_GXX%" --version >nul 2>nul
+if errorlevel 1 (
+    echo Cannot run: %MINGW_GXX%
+    pause
+    exit /b 1
+)
 
 echo Compiler: %MINGW_GXX%
 echo Compiling main.cpp + graph.cpp + flow.cpp + ui.cpp + layout.cpp + graph_io.cpp ...
+echo.
 
-g++ -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -I third_party/easyx/include -L third_party/easyx/lib64 main.cpp graph.cpp flow.cpp ui.cpp layout.cpp graph_io.cpp %COMPAT% -o main.exe -leasyx -lcomdlg32
+"%MINGW_GXX%" -std=c++17 -O2 -static -static-libgcc -static-libstdc++ -I third_party\easyx\include -L third_party\easyx\lib64 main.cpp graph.cpp flow.cpp ui.cpp layout.cpp graph_io.cpp -o main.exe -leasyx -lcomdlg32
 
 if errorlevel 1 (
     echo.

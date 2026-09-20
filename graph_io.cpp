@@ -141,21 +141,21 @@ bool load_graph(Graph& g, const std::string& path, std::string& error) {
 
     std::ifstream fin(path.c_str());
     if (!fin) {
-        error = "打不开文件（路径不对，或者文件被别的程序占用了）";
+        error = "cannot open the file (wrong path, or it is locked by another program)";
         return false;
     }
 
     int n = 0, m = 0, directed = 0;
     if (!(fin >> n >> m >> directed)) {
-        error = "文件第一行应该是：n m is_directed";
+        error = "the first line should be: n m is_directed";
         return false;
     }
     if (n < 0 || n > kMaxNodes) {
-        error = "节点数 n 超出范围（本程序最大支持 2000）";
+        error = "node count n is out of range (this program supports up to 2000)";
         return false;
     }
     if (m < 0) {
-        error = "边数 m 不能是负数";
+        error = "edge count m cannot be negative";
         return false;
     }
 
@@ -180,15 +180,15 @@ bool load_graph(Graph& g, const std::string& path, std::string& error) {
         ss >> cap;                              // 没写容量就按 1 处理
 
         if (u < 1 || u > n || v < 1 || v > n) {
-            error = "边的端点 " + std::to_string(u) + " " + std::to_string(v) +
-                    " 超出范围（节点编号是 1.." + std::to_string(n) + "，从 1 开始）";
+            error = "edge endpoint " + std::to_string(u) + " " + std::to_string(v) +
+                    " is out of range (node ids are 1.." + std::to_string(n) + ")";
             return false;
         }
         edges.push_back(std::make_pair(u, v));
     }
     if (static_cast<int>(edges.size()) < m) {
-        error = "文件里只有 " + std::to_string(edges.size()) + " 条边，但第一行声明了 " +
-                std::to_string(m) + " 条";
+        error = "the file only has " + std::to_string(edges.size()) +
+                " edges, but the first line declares " + std::to_string(m);
         return false;
     }
     fin.close();
@@ -196,7 +196,7 @@ bool load_graph(Graph& g, const std::string& path, std::string& error) {
     // 检查通过，交给队友写的读取函数：它会同时建好邻接表和邻接矩阵
     g.build_from_file(path);
     if (g.n != n) {
-        error = "读取结果和文件头对不上，请检查文件";
+        error = "the parsed result does not match the file header, please check the file";
         return false;
     }
     return true;
@@ -217,7 +217,7 @@ bool save_graph(const Graph& g, const std::string& path, std::string& error) {
 
     std::ofstream fout(path.c_str());
     if (!fout) {
-        error = "写不进这个位置（可能是只读文件，或者没有权限）";
+        error = "cannot write here (read-only file, or no permission)";
         return false;
     }
 
@@ -229,7 +229,7 @@ bool save_graph(const Graph& g, const std::string& path, std::string& error) {
     fout.close();
 
     if (!fout) {
-        error = "写文件的时候出错了";
+        error = "error while writing the file";
         return false;
     }
     return true;
