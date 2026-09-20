@@ -121,7 +121,7 @@ bool do_load(Graph& g, string& current_file) {
 }
 
 bool do_random(Graph& g, string& current_file) {
-    int n = 0, m = 0, directed = 1, seed = 0;
+    int n = 0, m = 0, directed = 1, seed = 0, max_capacity = 9;
 
     ReadResult r = read_int("Node count n (>= 2): ", n);
     if (r != ReadResult::Ok) return r == ReadResult::Bad;
@@ -140,7 +140,13 @@ bool do_random(Graph& g, string& current_file) {
     r = read_int("Random seed, 0 = different every time (default 0): ", seed);
     if (r != ReadResult::Ok) return r == ReadResult::Bad;
 
-    g.build_random(n, m, directed != 0, seed < 0 ? 0u : static_cast<unsigned>(seed));
+    // 容量默认在 1..9 之间随机取：最大流演示用带容量的图更好看，
+    // 想要普通的不带权图就填 1
+    r = read_int("Max edge capacity, 1 = unweighted (default 9): ", max_capacity);
+    if (r != ReadResult::Ok) return r == ReadResult::Bad;
+
+    g.build_random(n, m, directed != 0, seed < 0 ? 0u : static_cast<unsigned>(seed),
+                   max_capacity);
     current_file = "(random graph, not saved yet)";
     return true;
 }

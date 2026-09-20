@@ -80,9 +80,12 @@ bool Graph::build_from_file(const string& filename) {
     return true;
 }
 
-void Graph::build_random(int node_count, int edge_count, bool directed, unsigned seed) {
+void Graph::build_random(int node_count, int edge_count, bool directed, unsigned seed,
+                         int max_capacity) {
     is_directed = directed ? 1 : 0;
     n = node_count;
+
+    if (max_capacity < 1) max_capacity = 1;
 
     if (n < 1) n = 1;                   // 至少得有一个点，不然下面没法分配空间
     adj_list.assign(n + 1, vector<int>());
@@ -104,6 +107,12 @@ void Graph::build_random(int node_count, int edge_count, bool directed, unsigned
     unsigned used_seed = (seed == 0) ? random_device{}() : seed;
     mt19937 rng(used_seed);
     uniform_int_distribution<int> pick(1, n);
+    uniform_int_distribution<int> pick_cap(1, max_capacity);   // 每条边的容量
+
+    // 容量随机取还是固定 1
+    auto random_cap = [&]() -> int {
+        return max_capacity > 1 ? pick_cap(rng) : 1;
+    };
 
     if (n >= 2 && edge_count > 0) {
         if (edge_count > max_edges / 2) {
@@ -121,7 +130,7 @@ void Graph::build_random(int node_count, int edge_count, bool directed, unsigned
             shuffle(all_edges.begin(), all_edges.end(), rng);
 
             for (int i = 0; i < edge_count; ++i) {
-                add_edge(all_edges[i].first, all_edges[i].second, 1);
+                add_edge(all_edges[i].first, all_edges[i].second, random_cap());
             }
         } else {
             // 稀疏图：随机抽两个点当一条边，抽重了就再来一次
@@ -133,13 +142,14 @@ void Graph::build_random(int node_count, int edge_count, bool directed, unsigned
                 if (cap_matrix[u][v] != 0) continue;        // 这条边已经有了
                 if (!directed && cap_matrix[v][u] != 0) continue;
 
-                add_edge(u, v, 1);
+                add_edge(u, v, random_cap());
             }
         }
     }
 
     cout << "Random graph generated  (N = " << n << ", M = " << m << ", "
          << (is_directed ? "directed" : "undirected")
+         << ", capacity 1.." << max_capacity
          << ", seed = " << used_seed << ")" << endl;
     cout << "  tip: use seed = " << used_seed << " to get this exact graph again" << endl;
 }

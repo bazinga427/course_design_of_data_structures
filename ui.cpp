@@ -99,6 +99,12 @@ const COLORREF C_EDGE_TREE      = RGB(255, 190, 92);   // 遍历树上的边
 const COLORREF C_EDGE_PATH      = RGB(255, 126, 126);  // 当前这条增广路
 const COLORREF C_EDGE_CUT       = RGB(255, 78, 78);    // 割边
 const COLORREF C_EDGE_FULL      = RGB(88, 196, 140);   // 已经流满的边
+const COLORREF C_PIPE           = RGB(46, 50, 64);     // 边的"管子"底色（没流的部分）
+const COLORREF C_FLOW           = RGB(64, 198, 130);   // 已经流过去的那一截
+const COLORREF C_FLOW_FULL      = RGB(255, 176, 64);   // 流满了（橙）
+const COLORREF C_NODE_WAIT      = RGB(58, 126, 178);   // 已经发现、还在队列里等着
+const COLORREF C_NODE_WAIT_E    = RGB(126, 204, 246);
+const COLORREF C_REV            = RGB(255, 150, 70);   // 反向边（虚线箭头）
 
 // ---------------- 小工具 ----------------
 
@@ -264,6 +270,7 @@ enum ButtonId {
     BTN_BFS,
     BTN_DFS,
     BTN_FLOW,
+    BTN_RESID,
     BTN_STEP,
     BTN_STOP,
     BTN_HELP
@@ -361,6 +368,7 @@ private:
     FlowResult flow;                               // 最大流结果
     size_t flow_step = 0;                          // 已经播完几次增广
     bool show_cut = false;                         // 是否已经标出最小割
+    bool residual_mode = true;                     // 边上显示什么：true = 残量网络，false = 流量/容量
     bool paused = false;                           // 动画暂停
     int interval_ms = 600;                         // 每步间隔（毫秒）
     DWORD next_tick = 0;                           // 下一步的时间点
@@ -414,6 +422,7 @@ private:
             {BTN_BFS,    "BFS 遍历"},
             {BTN_DFS,    "DFS 遍历"},
             {BTN_FLOW,   "最大流"},
+            {BTN_RESID,  "残量网络"},
             {BTN_STEP,   "单步"},
             {BTN_STOP,   "停止"},
             {BTN_HELP,   "帮助"},
@@ -862,6 +871,7 @@ private:
         case 'B': start_traversal(true); break;      // 广度优先遍历动画
         case 'D': start_traversal(false); break;     // 深度优先遍历动画
         case 'M': start_flow(); break;               // 最大流最小割
+        case 'V': toggle_residual_mode(); break;     // 切换边上显示：残量网络 / 流量容量
         case 'N': step_forward(); break;             // 单步：点一下走一步
         case 'S': stop_animation(); break;           // 停止动画
         case VK_SPACE:
@@ -902,6 +912,7 @@ private:
         case BTN_BFS: start_traversal(true); break;
         case BTN_DFS: start_traversal(false); break;
         case BTN_FLOW: start_flow(); break;
+        case BTN_RESID: toggle_residual_mode(); break;
         case BTN_STEP: step_forward(); break;
         case BTN_STOP: stop_animation(); break;
         case BTN_HELP: show_help = !show_help; break;
@@ -1135,6 +1146,16 @@ private:
         }
         clear_algorithm();
         set_toast("已停止动画");
+    }
+
+    // 边上显示什么：
+    //   残量网络（默认）：正向还能加多少 / 反向能撤多少，并且把反向边画成虚线箭头；
+    //   流量/容量：就是常见的 f/c。
+    void toggle_residual_mode() {
+        residual_mode = !residual_mode;
+        set_toast(residual_mode
+                      ? "边上显示残量网络：正向还能加多少 / 反向能撤多少，橙色虚线就是反向边"
+                      : "边上显示 流量/容量");
     }
 
     std::string path_text(const std::vector<int>& path) const {
@@ -1386,6 +1407,7 @@ private:
             draw_node_panel();
         }
         draw_toast();
+        draw_flow_legend();
         draw_toolbar();
         draw_scrollbars();
         draw_status();
@@ -1533,30 +1555,97 @@ private:
         setlinestyle(PS_SOLID, width);
         line(p1.x, p1.y, p2.x, p2.y);
 
-        if (directed) {
-            draw_arrow(p2, ux, uy, color);
+        // 没有最大流结果的时候，画完线 + 箭头就结束
+        const bool flow_mode = (algo == Algo::Flow && !disp.empty() && id_a >= 1 && id_b >= 1 &&
+                                id_a <= g.n && id_b <= g.n && g.cap_matrix[id_a][id_b] > 0);
+        if (!flow_mode) {
+            if (directed) {
+                draw_arrow(p2, ux, uy, color);
+            }
+            return;
         }
 
-        // 算过最大流之后，每条边上标「流量/容量」
-        if (algo != Algo::Flow || disp.empty()) {
-            return;
-        }
-        if (id_a < 1 || id_b < 1 || id_a > g.n || id_b > g.n) {
-            return;
-        }
         const int cap = g.cap_matrix[id_a][id_b];
-        if (cap <= 0) {
-            return;
+        const int f = edge_flow_show(id_a, id_b);
+        const double frac = std::min(1.0, static_cast<double>(f) / static_cast<double>(cap));
+        const bool cut = is_cut_edge(id_a, id_b);
+        const bool path_fwd = is_path_edge(id_a, id_b);   // 增广路顺着这条边走
+        const bool path_rev = is_path_edge(id_b, id_a);   // 增广路走的是它的反向边（撤销流量）
+
+        // 1) 割边 / 当前增广路，先铺一层粗光晕，一眼能看出重点
+        if (cut || path_fwd || path_rev) {
+            setlinecolor(cut ? C_EDGE_CUT : (path_rev ? C_REV : C_EDGE_PATH));
+            setlinestyle(PS_SOLID, 15);
+            line(p1.x, p1.y, p2.x, p2.y);
         }
 
-        char buf[48];
-        std::snprintf(buf, sizeof(buf), "%d/%d", edge_flow_show(id_a, id_b), cap);
-        use_num_font(14);
-        settextcolor(edge_saturated(id_a, id_b) ? C_EDGE_FULL : C_TEXT_DIM);
+        // 2) 管子：这一整条代表容量
+        setlinecolor(C_PIPE);
+        setlinestyle(PS_SOLID, 9);
+        line(p1.x, p1.y, p2.x, p2.y);
 
-        const int mx = (p1.x + p2.x) / 2 + static_cast<int>(std::lround(-uy * 14.0));
-        const int my = (p1.y + p2.y) / 2 + static_cast<int>(std::lround(ux * 14.0));
-        outtextxy(mx - textwidth(buf) / 2, my - textheight(buf) / 2, buf);
+        // 3) 已经流过去的那一截：从上游往下游填，绿 = 还有余量，橙 = 流满了
+        if (f > 0) {
+            const int dir = edge_flow_dir(id_a, id_b);
+            const POINT s = (dir >= 0) ? p1 : p2;
+            const POINT e = (dir >= 0) ? p2 : p1;
+            const int ex = s.x + static_cast<int>(std::lround((e.x - s.x) * frac));
+            const int ey = s.y + static_cast<int>(std::lround((e.y - s.y) * frac));
+            setlinecolor(frac >= 1.0 ? C_FLOW_FULL : C_FLOW);
+            setlinestyle(PS_SOLID, 9);
+            line(s.x, s.y, ex, ey);
+        }
+
+        if (directed) {
+            draw_arrow(p2, ux, uy,
+                       cut ? C_EDGE_CUT : (frac >= 1.0 ? C_FLOW_FULL : C_FLOW));
+        }
+
+        // 4) 反向边：只要这条边上已经有流量，残留网络里就多出一条反向边，
+        //    它的容量等于已经流过去的量（也就是"能撤销多少"）。
+        //    画成橙色虚线箭头，指回上游，和正向的管子区分开。
+        if (residual_mode && f > 0) {
+            const double off = 15.0;
+            const int ox = static_cast<int>(std::lround(uy * off));
+            const int oy = static_cast<int>(std::lround(-ux * off));
+            const POINT r1 = {static_cast<LONG>(p2.x + ox), static_cast<LONG>(p2.y + oy)};
+            const POINT r2 = {static_cast<LONG>(p1.x + ox), static_cast<LONG>(p1.y + oy)};
+
+            setlinecolor(C_REV);
+            setlinestyle(PS_DASH, 1);
+            line(r1.x, r1.y, r2.x, r2.y);
+            draw_arrow(r2, -ux, -uy, C_REV);
+
+            char rbuf[32];
+            std::snprintf(rbuf, sizeof(rbuf), "反向（能撤 %d）", edge_cancel(id_a, id_b));
+            use_num_font(13);
+            const int rw = textwidth(rbuf);
+            settextcolor(C_REV);
+            outtextxy((r1.x + r2.x) / 2 - rw / 2 + ox, (r1.y + r2.y) / 2 - 8 + oy, rbuf);
+        }
+
+        // 5) 标签：装在胶囊里，不会被线盖住
+        char buf[48];
+        if (residual_mode) {
+            // 正向残留 = 还能再加多少；能撤 = 反向边有多少容量
+            std::snprintf(buf, sizeof(buf), "残 %d / 撤 %d", edge_residual(id_a, id_b),
+                          edge_cancel(id_a, id_b));
+        } else {
+            std::snprintf(buf, sizeof(buf), "流 %d / 容 %d", f, cap);
+        }
+        use_num_font(14);
+        const int tw = textwidth(buf);
+        const int th = textheight(buf);
+        const int mx = (p1.x + p2.x) / 2 + static_cast<int>(std::lround(-uy * 18.0));
+        const int my = (p1.y + p2.y) / 2 + static_cast<int>(std::lround(ux * 18.0));
+
+        setfillcolor(C_PANEL);
+        setlinecolor(cut ? C_EDGE_CUT : C_PANEL_LINE);
+        setlinestyle(PS_SOLID, 1);
+        fillroundrect(mx - tw / 2 - 7, my - th / 2 - 3, mx + tw / 2 + 7, my + th / 2 + 3, 7, 7);
+
+        settextcolor(frac >= 1.0 ? C_FLOW_FULL : C_TEXT);
+        outtextxy(mx - tw / 2, my - th / 2, buf);
     }
 
     // 边上要显示的流量：有向图就是这条弧上的流量；
@@ -1566,6 +1655,30 @@ private:
             return flow_on(u, v);
         }
         return std::abs(flow_on(u, v) - flow_on(v, u));
+    }
+
+    // 流量顺着哪一头走：+1 = a→b，-1 = b→a，0 = 没有流量
+    int edge_flow_dir(int u, int v) const {
+        if (directed) {
+            return flow_on(u, v) > 0 ? 1 : 0;
+        }
+        const int net = flow_on(u, v) - flow_on(v, u);
+        return (net > 0) ? 1 : ((net < 0) ? -1 : 0);
+    }
+
+    // 残留网络里 u→v 这条弧还剩多少容量：
+    //   原始容量 - 已经流过去的 + 从反方向推回来的（能撤销的部分）
+    int edge_residual(int u, int v) const {
+        if (u < 1 || v < 1 || u > g.n || v > g.n) {
+            return 0;
+        }
+        return g.cap_matrix[u][v] - flow_on(u, v) + flow_on(v, u);
+    }
+
+    // 这条边上"能撤销多少"：就是它当前净流量的多少
+    int edge_cancel(int u, int v) const {
+        const int net = flow_on(u, v) - flow_on(v, u);
+        return net > 0 ? net : 0;
     }
 
     bool edge_saturated(int u, int v) const {
@@ -1775,26 +1888,48 @@ private:
 
             if (flow_step == 0) {
                 lines.push_back("还没开始增广 ...");
-            } else if (!show_cut) {
+            } else {
                 const AugmentStep& st = flow.steps[flow_step - 1];
                 std::snprintf(buf, sizeof(buf), "第 %d / %d 次增广：%s    瓶颈 %d",
                               static_cast<int>(flow_step), static_cast<int>(flow.steps.size()),
                               path_text(st.path).c_str(), st.bottleneck);
                 lines.push_back(buf);
-            } else {
-                lines.push_back("最小割 S = { " + join_ids(flow.source_side) + "}    T = { " +
-                                join_ids(flow.sink_side) + "}");
-                std::string cut;
-                for (size_t i = 0; i < flow.cut_edges.size(); ++i) {
-                    if (i > 0) {
-                        cut += "  ";
+
+                // 把这一步对残留网络的改动写出来：正向残量减、反向边容量加
+                size_t shown = 0;
+                for (size_t i = 0; i + 1 < st.path.size() && shown < 4; ++i) {
+                    const int u = st.path[i];
+                    const int v = st.path[i + 1];
+                    if (u < 1 || v < 1 || u > g.n || v > g.n) {
+                        continue;
                     }
-                    cut += std::to_string(flow.cut_edges[i].first) + "→" +
-                           std::to_string(flow.cut_edges[i].second);
+                    const int f_after = edge_residual(u, v);
+                    const int r_after = edge_residual(v, u);
+                    char line2[200];
+                    std::snprintf(line2, sizeof(line2), "   %d→%d：残量 %d→%d，反向边 %d→%d", u, v,
+                                  f_after + st.bottleneck, f_after, r_after - st.bottleneck,
+                                  r_after);
+                    lines.push_back(line2);
+                    ++shown;
                 }
-                lines.push_back(cut.empty() ? std::string("割边：（没有）") : ("割边：" + cut));
+
+                if (show_cut) {
+                    lines.push_back("最小割 S = { " + join_ids(flow.source_side) + "}    T = { " +
+                                    join_ids(flow.sink_side) + "}");
+                    std::string cut;
+                    for (size_t i = 0; i < flow.cut_edges.size(); ++i) {
+                        if (i > 0) {
+                            cut += "  ";
+                        }
+                        cut += std::to_string(flow.cut_edges[i].first) + "→" +
+                               std::to_string(flow.cut_edges[i].second);
+                    }
+                    lines.push_back(cut.empty() ? std::string("割边：（没有）") : ("割边：" + cut));
+                }
             }
-            lines.push_back("边上显示 流量/容量 · N 单步 · 单击换源点 · 右键换汇点");
+            lines.push_back(std::string("边上显示 ") +
+                            (residual_mode ? "残留网络（V 换成流量/容量）" : "流量/容量（V 换成残留网络）") +
+                            " · N 单步 · 单击换源点 · 右键换汇点");
         }
 
         // 量一下最宽的一行，面板宽度跟着文字走
@@ -1994,6 +2129,55 @@ private:
         outtextxy(status.r - 12 - textwidth(r.c_str()), status.t + (status.h() - textheight(r.c_str())) / 2, r.c_str());
     }
 
+    // 最大流模式下，左下角放一个小图例，免得颜色和数字看不懂
+    void draw_flow_legend() {
+        if (algo != Algo::Flow || show_help) {
+            return;
+        }
+
+        struct Row {
+            COLORREF color;
+            bool dashed;
+            const char* text;
+        };
+        const Row rows[] = {
+            {C_PIPE,      false, "管子粗细 = 这条边的容量"},
+            {C_FLOW,      false, "绿色 = 已经流过去（还有余量）"},
+            {C_FLOW_FULL, false, "橙色 = 这条边流满了"},
+            {C_REV,       true,  "橙色虚线 = 反向边（能撤销的流量）"},
+            {C_EDGE_CUT,  false, "红色 = 最小割的割边"},
+        };
+
+        use_ui_font(15);
+        int w = 210;
+        for (const Row& r : rows) {
+            w = std::max(w, textwidth(gbk(r.text).c_str()) + 56);
+        }
+
+        const int line_h = 24;
+        const int hh = 12 + line_h * static_cast<int>(sizeof(rows) / sizeof(rows[0])) + 8;
+        const int x0 = canvas.l + 16;
+        const int y0 = canvas.b - hh - 14;
+
+        setfillcolor(C_PANEL);
+        setlinecolor(C_PANEL_LINE);
+        setlinestyle(PS_SOLID, 1);
+        fillroundrect(x0, y0, x0 + w, y0 + hh, 10, 10);
+
+        int y = y0 + 12 + line_h / 2;
+        for (const Row& r : rows) {
+            setlinecolor(r.color);
+            setlinestyle(r.dashed ? PS_DASH : PS_SOLID, r.dashed ? 1 : 5);
+            line(x0 + 14, y, x0 + 34, y);
+
+            settextcolor(C_TEXT);
+            use_ui_font(15);
+            const std::string t = gbk(r.text);
+            outtextxy(x0 + 44, y - textheight(t.c_str()) / 2, t.c_str());
+            y += line_h;
+        }
+    }
+
     void draw_toast() {
         if (toast_text.empty() || GetTickCount() >= toast_time) {
             return;
@@ -2028,6 +2212,7 @@ private:
             {"D",                     "深度优先（DFS）遍历动画"},
             {"M",                     "最大流最小割动画（边上显示 流量/容量）"},
             {"N / 「单步」",          "点一下走一步（会自动停下来，节奏完全由你控制）"},
+            {"V / 「残量网络」",      "边上显示残量网络：正向还能加多少、反向能撤多少"},
             {"空格",                  "暂停 / 继续自动播放"},
             {"S",                     "停止动画"},
             {"E",                     "显示 / 隐藏每个节点的度数"},

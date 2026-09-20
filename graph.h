@@ -35,7 +35,10 @@ public:
     // 随机生成一张图：node_count 个节点、edge_count 条边
     // 节点编号 1..node_count；seed = 0 表示每次都不一样，
     // 填一个非 0 的种子（比如 12345）就能复现出完全相同的一张图。
-    void build_random(int node_count, int edge_count, bool directed = true, unsigned seed = 0);
+    // max_capacity > 1 时每条的边的容量在 1..max_capacity 之间随机取（给最大流用），
+    // 等于 1 就是不带权的图。
+    void build_random(int node_count, int edge_count, bool directed = true, unsigned seed = 0,
+                      int max_capacity = 1);
 
     // 加一条边 u -> v，容量默认 1；无向图会自动补上 v -> u
     void add_edge(int u, int v, int capacity = 1);
