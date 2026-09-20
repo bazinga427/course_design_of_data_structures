@@ -1282,7 +1282,8 @@ private:
         if (!is_visited_id(u) || !is_visited_id(v)) {
             return false;
         }
-        return parent[v] == u;
+        // 无向图两个方向画的是同一条边，所以要正反都判一次
+        return parent[v] == u || (!directed && parent[u] == v);
     }
 
     // 当前这条增广路上的边
@@ -1292,6 +1293,9 @@ private:
         }
         for (size_t i = 0; i + 1 < path_nodes.size(); ++i) {
             if (path_nodes[i] == u && path_nodes[i + 1] == v) {
+                return true;
+            }
+            if (!directed && path_nodes[i] == v && path_nodes[i + 1] == u) {
                 return true;
             }
         }
@@ -1304,6 +1308,9 @@ private:
         }
         for (const auto& e : flow.cut_edges) {
             if (e.first == u && e.second == v) {
+                return true;
+            }
+            if (!directed && e.first == v && e.second == u) {
                 return true;
             }
         }
