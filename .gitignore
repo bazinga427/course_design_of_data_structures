@@ -1,16 +1,9 @@
-# 编译产物（这些不应该提交到仓库，队友那边自己编就行）
-*.exe
-*.o
-*.obj
-*.out
+# 依赖与打包产物
+node_modules/
 
-# VSCode 的 IntelliSense 缓存
-.vscode/ipch/
-
-# 构建输出目录（如果以后改用 build 目录放产物）
-build/
-
-# 程序运行时生成的图文件和布局坐标（不是源码）
-view_graph.txt
-saved_graph.txt
-*.layout
+# 运行 / 自检时产生的临时文件
+gv_io_*.tmp
+*.log
+.parity-build-*/
+parity.exe
+cpp_dump.txt

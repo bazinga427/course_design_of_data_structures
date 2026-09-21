@@ -1,0 +1,21 @@
+{
+  "name": "graph-course-design-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "图结构综合实验平台 —— 网页版前端（Vue3 + Cytoscape.js + C++/WASM 核心）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "test:core": "node tools/selftest.mjs"
+  },
+  "dependencies": {
+    "cytoscape": "^3.30.2",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "vite": "^5.4.11"
+  }
+}
