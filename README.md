@@ -1,26 +1,91 @@
-# 图结构课程设计（桌面版 + 网页版）
+# 图结构课程设计 —— 网页版
 
-这个文件夹里是同一个课程设计的两份实现，**算法源码是同一份**：
+把同一套图算法（建图 / 存储 / DFS / BFS / 遍历序列判别 / 最大流最小割 /
+随机建图 / 保存加载）搬到浏览器里：左边是数据面板和算法动画，右边是图结构可视化。
 
-| 目录 | 是什么 | 怎么跑 |
-| --- | --- | --- |
-| `course_design_of_data_structures-main\` | C++ / EasyX 桌面版（控制台菜单 + 图形窗口） | 双击 `build.bat`，或按 `main.exe 1` 直接开图形窗口 |
-| `graph-web\` | 网页版（Vue 3 + Vite + Cytoscape.js，算法核心是 C++ 编译出的 WASM，没装 Emscripten 时用 JS 等价实现） | `npm install` 然后 `npm run dev`；看打包结果用 `npm run build` + `npm run preview`（http://localhost:4173） |
+算法内核和 EasyX 桌面版是**同一份 C++ 代码**（`graph.cpp` / `flow.cpp` /
+`graph_io.cpp`），网页版只是给它套了一层 `binding.cpp`（JSON 接口）并编译成 WASM；
+没有装 Emscripten 的时候自动退回 JS 等价实现，页面照样能跑。
 
-两份实现共用下面这些 C++ 文件（网页版把它们放在 `graph-web\cpp\`，
-通过 `graph-web\binding.cpp` 暴露成 JSON 接口，编译成 WASM）：
+## 代码都在哪
+
+| 位置 | 是什么 |
+| --- | --- |
+| `index.html` / `vite.config.js` / `package.json` | 前端工程配置（Vite） |
+| `src/main.js`、`src/App.vue` | 页面入口与整体布局 |
+| `src/components/GraphCanvas.vue` | **图结构可视化**：Cytoscape 画布、5 种布局、点大小、缩放、导出 PNG |
+| `src/components/StoragePanel.vue` | 邻接表 / 邻接矩阵（容量矩阵）/ 边表 |
+| `src/components/TraversalPanel.vue` | DFS / BFS 计算、单步播放、遍历序列合法性判别 |
+| `src/components/FlowAnimation.vue` | 最大流最小割计算、按增广路播放、残余网络视图 |
+| `src/store/graphStore.js` | 全页面共用的状态（当前图、两个高亮图层、提示条） |
+| `src/wasm/loader.js` | 拿算法接口：优先 WASM，没有就退回 JS |
+| `src/wasm/fallback.js` | C++ 核心的 JS 等价实现（读文件逻辑和 `graph_io.cpp` 一一对应） |
+| `src/samples/sampleGraphs.js` | 页面上「载入示例」的三张图 |
+| `binding.cpp` | **后端适配层**：C++ 核心 ↔ 前端，返回 JSON 文本 |
+| `cpp/` | 算法源码：`graph.{h,cpp}`、`flow.{h,cpp}`、`graph_io.{h,cpp}`、`layout.h` |
+| `tools/build_wasm.bat` | 把 C++ 核心编译成 `public/wasm/graph_core.js` |
+| `tools/selftest.mjs` | 纯 JS 自检（`npm run test:core`） |
+| `tools/parity/` | C++ 与 JS 两边结果逐字段对比的一致性自检 |
+| `graph.txt`、`graph2.txt`、`rev.txt`、`graph0.txt` | 示例 / 自检用的图文件（`graph0.txt` 是 0 开始编号的例子） |
+| `FRONTEND.md` | 上面 8 个接口的 JSON 字段说明 |
+
+## 怎么跑
+
+```bat
+npm install
+npm run dev        :: 开发模式，http://localhost:5173
+npm run build      :: 打包到 dist\
+npm run preview    :: 预览打包结果，http://localhost:4173
+```
+
+打包出来的 `dist/` 用的是相对路径，丢到任何静态服务器（甚至 IIS、Nginx、
+PyCharm 内置服务器）里都能跑。
+
+## 技术栈
+
+| 层 | 用了什么 |
+| --- | --- |
+| 前端框架 | Vue 3（`<script setup>` 组合式 API）+ Vite 5 |
+| 图可视化 | Cytoscape.js（内置布局 cose 力导向 / circle / grid / breadthfirst / random） |
+| 算法 | C++17：邻接表 + 容量矩阵、DFS / BFS、序列判别、Ford-Fulkerson 最大流最小割、随机建图（mt19937） |
+| 前后端桥 | Emscripten 把 C++ 编成 WASM，`ccall` + JSON 文本；没有 WASM 时用 JS 兜底实现 |
+| 工程化 | 相对路径打包、两条自检（纯 JS 自检 + C++/JS 一致性对比） |
+
+## 图文件格式
+
+第一行 `n m is_directed`（顶点数 边数 1=有向 / 0=无向），后面每行一条边 `u v [容量]`，
+容量省略就是 1：
 
 ```
-graph.h / graph.cpp        图的存储（邻接表 + 容量矩阵）、DFS / BFS、遍历序列判别、随机建图
-flow.h  / flow.cpp         Ford-Fulkerson 最大流 + 最小割（带每一次增广的过程）
-graph_io.h / graph_io.cpp  图文件的保存与加载、节点编号识别（1 开始 / 0 开始）
-layout.h / layout.cpp      桌面版的圆形 / 随机 / 力导向布局
-main.cpp / ui.cpp          桌面版的控制台菜单与 EasyX 窗口
+6 8 1
+1 2 3
+1 3 2
+...
 ```
 
-网页版自己的说明（目录结构、JSON 接口契约、怎么自检）在
-`graph-web\README.md` 和 `graph-web\FRONTEND.md` 里。
+读文件的时候比“教科书版”宽容一些，为了能直接打开别人给的图文件：
 
-读图文件的规则在两边是同一套：第一行 `n m is_directed`，后面每行 `u v [容量]`；
-**0 开始编号的文件也会自动 +1 映射成 1..n**，另外空行、`#`/`%`/`//` 注释行、
-逗号或分号分隔、UTF-8 BOM 都能容忍。
+- **编号从 0 开始的文件也认**（自动 +1 映射成 1..n 再画，页面会提示一句），
+  很多教材和早期版本的 `graph.txt` 都是 0 开始编号；
+- 第一行前面允许有空行、注释行、UTF-8 BOM（记事本“另存为 UTF-8”会加）；
+- 空格 / Tab / 逗号 / 分号 都能当分隔符，`#`、`%`、`//` 后面的内容当注释；
+- 容量、第三个数（是否有向）都可以省。
+
+## 几个实现上的说明
+
+**点的大小**：Cytoscape 里节点的 `width` / `height` 是“模型坐标”，会跟着画布
+缩放一起放大缩小，而每种布局的包围盒不一样、`fit` 之后的缩放也不一样，
+于是同一个点在力导向布局里 72px、在随机布局里能到 136px。现在所有尺寸都乘上
+`1/当前缩放`（`GraphCanvas.vue` 里的 `buildStylesheet`），按屏幕像素来算，
+点在任何布局、任何缩放下都是同一个大小（默认 28px，工具栏「点大小」可调）。
+
+**力导向自动降级**：点数超过 260 时 cose 布局（O(n²)）太慢，自动换成环形布局并提示。
+
+**邻接矩阵上限**：`n > 150` 时矩阵不铺表格（`matrixOmitted`），算法照常计算。
+
+## 自检
+
+```bat
+npm run test:core             :: 纯 JS：50 项（遍历序列、最大流、最小割、保存再读回、各种图文件）
+node tools/parity/compare.mjs :: 编译 C++ 核心跑一遍，和 JS 兜底实现逐字段对比（160 项）
+```
