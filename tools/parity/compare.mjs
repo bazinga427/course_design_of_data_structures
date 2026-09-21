@@ -3,7 +3,7 @@
 //
 //  用原生 g++ 跑一遍真正的 C++ 核心（binding.cpp + graph.cpp + flow.cpp
 //  + graph_io.cpp），再跑一遍 src/wasm/fallback.js，把两边每个接口的返回
-//  值逐字段对比。两边一致，说明“网页上的结果 = EasyX 版的结果”。
+//  值逐字段对比。两边一致，说明“网页上的结果 = C++ 内核的结果”。
 //
 //  用法（在项目根目录）：node tools/parity/compare.mjs
 //  可选：用环境变量 PARITY_ROOT 指定项目根，用 CXX 指定编译器

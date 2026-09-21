@@ -3,9 +3,9 @@
 把同一套图算法（建图 / 存储 / DFS / BFS / 遍历序列判别 / 最大流最小割 /
 随机建图 / 保存加载）搬到浏览器里：左边是数据面板和算法动画，右边是图结构可视化。
 
-算法内核和 EasyX 桌面版是**同一份 C++ 代码**（`graph.cpp` / `flow.cpp` /
-`graph_io.cpp`），网页版只是给它套了一层 `binding.cpp`（JSON 接口）并编译成 WASM；
-没有装 Emscripten 的时候自动退回 JS 等价实现，页面照样能跑。
+算法内核是 **C++17**（`cpp/graph.cpp` / `cpp/flow.cpp` /
+`cpp/graph_io.cpp`），网页版给它套了一层 `binding.cpp`（JSON 接口）并编译成 WASM；
+没有装 Emscripten 的时候自动退回 `src/wasm/fallback.js` 里的 JS 等价实现，页面照样能跑。
 
 ## 代码都在哪
 

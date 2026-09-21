@@ -17,7 +17,7 @@
 //
 //  两点说明：
 //   1) 这里没有任何算法，算法全部复用成员 B 的 graph.cpp / flow.cpp / graph_io.cpp，
-//      这个文件只做“参数搬运 + JSON 拼装”，保证网页和 EasyX 版本算出来一模一样。
+//      这个文件只做“参数搬运 + JSON 拼装”，保证网页和 C++ 内核算出来一模一样。
 //   2) 图上所有函数都以 1..n 编号，和 C++ 核心一致。
 //      gv_load_text 的返回值里多一个 "base" 字段：1 = 文件本来就是 1 开始编号，
 //      0 = 文件是 0 开始编号、已经自动 +1 映射过（前端提示一句，见 graph_io.cpp）。
@@ -445,7 +445,7 @@ GV_API const char* gv_max_flow(int s, int t) {
 
     // 每条边的容量 / 实际流量。
     // flow 是“净流量”，可能有负值（无向图会出现），前端显示时按 0 处理，
-    // 和 EasyX 窗口里 print_flow_result 的口径保持一致。
+    // 和 C++ 内核 print_flow_result 的口径保持一致。
     const std::vector<GVEdge> edges = collect_edges(g);
     out += ",\"edgeFlow\":[";
     for (size_t i = 0; i < edges.size(); ++i) {
