@@ -1,6 +1,6 @@
 <template>
   <div class="stage-card panel">
-    <div class="panel-head">
+    <div class="panel-head" v-if="!bare">
       <h3>图结构可视化</h3>
       <div class="row tight">
         <span class="hint" v-if="graph">鼠标滚轮缩放 · 拖动节点可以挪位置 · 点节点查看邻接表</span>
@@ -8,7 +8,7 @@
       </div>
     </div>
 
-    <div class="toolbar">
+    <div class="toolbar" v-if="!bare">
       <div class="row tight">
         <span class="hint">布局</span>
         <button
@@ -40,6 +40,9 @@
         <button class="btn tiny" :class="{ active: showEdgeLabels }" @click="toggleLabels">
           边权标签
         </button>
+        <button class="btn tiny" :class="{ active: showReverseArcs }" @click="toggleReverseArcs">
+          反向边
+        </button>
         <button class="btn tiny" @click="exportPng" :disabled="!graph">导出 PNG</button>
       </div>
     </div>
@@ -52,10 +55,13 @@
     </div>
 
     <div class="canvas-legend">
+      <span class="legend"><b class="mono">余x/总y</b> = 余额 / 权重</span>
       <span class="legend"><i style="background: #0e7490"></i>已访问</span>
       <span class="legend"><i style="background: #fbbf24"></i>当前点</span>
       <span class="legend"><i style="background: #22d3ee"></i>遍历树边</span>
       <span class="legend"><i style="background: #f87171"></i>增广路</span>
+      <span class="legend"><i style="background: #34d399"></i>正在推流 / 有流量</span>
+      <span class="legend"><i style="background: #38bdf8"></i>反向弧（余额 = 可撤回的流）</span>
       <span class="legend"><i style="background: #f472b6"></i>割边</span>
       <span class="legend"><i style="background: #60a5fa"></i>S 侧 / 源点</span>
       <span class="legend"><i style="background: #a78bfa"></i>T 侧 / 汇点</span>
@@ -66,12 +72,16 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import cytoscape from 'cytoscape'
-import { store, notify, edgeKey } from '../store/graphStore.js'
+import { store, notify, edgeKey, reverseEdgeKey } from '../store/graphStore.js'
 
+// bare = 演示模式下只要画布，不要面板标题和工具栏
+defineProps({ bare: { type: Boolean, default: false } })
 const host = ref(null)
 const cy = shallowRef(null)
 const layoutId = ref('force')
 const showEdgeLabels = ref(true)
+// 反向弧（残余网络里用来撤回流量的弧）默认显示，工具栏可以关掉
+const showReverseArcs = ref(true)
 // 点在屏幕上画多大（像素）。这个是屏幕像素，不是“模型坐标”，
 // 所以换布局、缩放都不会变；工具栏里的「点大小」就是改这个值。
 const nodeSize = ref(28)
@@ -82,6 +92,7 @@ const nodeSizePresets = [
 ]
 
 const graph = computed(() => store.graph)
+const supplyMeta = computed(() => store.supplyChainMeta)
 
 const layouts = [
   { id: 'force', label: '力导向' },
@@ -129,7 +140,6 @@ function buildStylesheet() {
   // 边宽已经是屏幕像素了，所以箭头也是屏幕像素大小；再让它跟着点大小走，
   // 点调大箭头大一点、点调小箭头小一点，看起来才协调。
   const arrow = 0.45 * (d / 28)
-
   return [
   {
     selector: 'node',
@@ -150,6 +160,34 @@ function buildStylesheet() {
       'transition-property': 'background-color, border-color, width, height, opacity',
       'transition-duration': '180ms',
     },
+  },
+  {
+    selector: 'node.sc-supplier',
+    style: { 'background-color': '#0369a1', 'border-color': '#7dd3fc' },
+  },
+  {
+    selector: 'node.sc-factory',
+    style: { 'background-color': '#0e7490', 'border-color': '#67e8f9' },
+  },
+  {
+    selector: 'node.sc-warehouse',
+    style: { 'background-color': '#1d4ed8', 'border-color': '#93c5fd' },
+  },
+  {
+    selector: 'node.sc-regional',
+    style: { 'background-color': '#4f46e5', 'border-color': '#a5b4fc' },
+  },
+  {
+    selector: 'node.sc-dc',
+    style: { 'background-color': '#6d28d9', 'border-color': '#c4b5fd' },
+  },
+  {
+    selector: 'node.sc-store',
+    style: { 'background-color': '#047857', 'border-color': '#6ee7b7' },
+  },
+  {
+    selector: 'node.sc-demand',
+    style: { 'background-color': '#be185d', 'border-color': '#f9a8d4' },
   },
   {
     selector: 'node.setS',
@@ -227,6 +265,24 @@ function buildStylesheet() {
     },
   },
   {
+    // 反向弧：原图里没有这条弧，但正方向推过流之后，残余网络里它就有余额了，
+    // 表示这些流量可以撤回来。没有余额时不画（由 applyHighlight 控制显示）。
+    selector: 'edge.reverseArc',
+    style: {
+      display: 'none',
+      'line-color': '#38bdf8',
+      'target-arrow-color': '#38bdf8',
+      'line-style': 'dashed',
+      width: 2.5 * u,
+      'arrow-scale': 0.34 * (d / 28),
+      'curve-style': 'unbundled-bezier',
+      'control-point-distances': -26 * u,
+      'control-point-weights': 0.5,
+      'z-index': 22,
+    },
+  },
+
+  {
     selector: 'edge.tree',
     style: {
       'line-color': '#22d3ee',
@@ -249,6 +305,37 @@ function buildStylesheet() {
     style: { 'line-color': '#34d399', 'target-arrow-color': '#34d399' },
   },
   {
+    // 正在试探的弧：黄色实线
+    selector: 'edge.probe',
+    style: {
+      'line-color': '#f59e0b',
+      'target-arrow-color': '#f59e0b',
+      width: 4 * u,
+      'z-index': 25,
+    },
+  },
+  {
+    // 走不通、要回退的弧：灰色虚线
+    selector: 'edge.deadend',
+    style: {
+      'line-color': '#6b7280',
+      'target-arrow-color': '#6b7280',
+      width: 3 * u,
+      'line-style': 'dashed',
+      'z-index': 18,
+    },
+  },
+  {
+    // 本步残余容量刚更新过的弧：绿色加粗
+    selector: 'edge.update',
+    style: {
+      'line-color': '#34d399',
+      'target-arrow-color': '#34d399',
+      width: 4.5 * u,
+      'z-index': 28,
+    },
+  },
+  {
     selector: 'edge.cut',
     style: {
       'line-color': '#f472b6',
@@ -267,6 +354,7 @@ function buildElements() {
   const elements = g.nodes.map((id) => ({
     data: { id: nodeId(id), nodeId: id, label: String(id) },
   }))
+  const listed = new Set(g.edges.map((e) => `${e.u}_${e.v}`))
   for (const e of g.edges) {
     elements.push({
       data: {
@@ -280,6 +368,27 @@ function buildElements() {
       },
       classes: g.directed ? 'directed' : '',
     })
+  }
+
+  // 再把反向弧也建出来（比如 1→2 的反向弧 2→1）。它们平时不显示，
+  // 只有正方向推过流、残余网络里真有余额时才画出来。图太大就不铺了。
+  if (g.edges.length <= 400) {
+    for (const e of g.edges) {
+      if (listed.has(`${e.v}_${e.u}`)) continue // 反方向的弧本来就在图里
+      elements.push({
+        data: {
+          id: `r${e.u}_${e.v}`,
+          source: nodeId(e.v),
+          target: nodeId(e.u),
+          u: e.v,
+          v: e.u,
+          rev: true,
+          cap: 0,
+          label: '',
+        },
+        classes: 'reverseArc directed',
+      })
+    }
   }
   return elements
 }
@@ -360,10 +469,9 @@ function applyHighlight() {
   if (!c) return
   const h = mergedHighlight.value
   const g = store.graph
-
   c.batch(() => {
     c.elements().removeClass(
-      'visited current frontier tree path cut flowEdge setS setT source sink',
+      'visited current frontier tree path cut flowEdge probe deadend update setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
     )
 
     c.nodes().forEach((node) => {
@@ -375,21 +483,37 @@ function applyHighlight() {
         if (id === store.source) node.addClass('source')
         if (id === store.sink) node.addClass('sink')
       }
-      node.data('label', Object.prototype.hasOwnProperty.call(h.nodeLabels, id)
+      const metaNode = supplyMeta.value && supplyMeta.value.nodes ? supplyMeta.value.nodes[id] : null
+      if (metaNode && metaNode.type) node.addClass(`sc-${metaNode.type}`)
+      const hasLayerLabel = Object.prototype.hasOwnProperty.call(h.nodeLabels, id)
+      const label = hasLayerLabel
         ? h.nodeLabels[id]
-        : String(id))
+        : metaNode ? (metaNode.short || metaNode.name || String(id)) : String(id)
+      node.data('label', label)
     })
 
     c.edges().forEach((edge) => {
-      const key = edgeKey(edge.data('u'), edge.data('v'))
+      const isRev = edge.data('rev') === true
+      const key = isRev
+        ? reverseEdgeKey(edge.data('u'), edge.data('v'))
+        : edgeKey(edge.data('u'), edge.data('v'))
       const cls = h.edges[key]
-      if (cls) edge.addClass(cls)
       const custom = h.edgeLabels[key]
-      if (!showEdgeLabels.value) {
-        edge.data('label', '')
-      } else {
-        edge.data('label', custom !== undefined ? custom : String(edge.data('cap')))
+
+      if (isRev) {
+        // 反向弧只有“有余额”时才画出来，也就是正方向真的推过流
+        const visible = showReverseArcs.value && (cls !== undefined || custom !== undefined)
+        edge.style('display', visible ? 'element' : 'none')
+        if (!visible) return
       }
+
+      if (cls) edge.addClass(cls)
+      if (!isRev) {
+        edge.removeStyle('line-fill line-gradient-stop-positions line-gradient-stop-colors')
+      }
+      if (!showEdgeLabels.value) edge.data('label', '')
+      else if (custom !== undefined) edge.data('label', custom)
+      else if (!isRev) edge.data('label', String(edge.data('cap')))
     })
   })
 }
@@ -432,6 +556,11 @@ function zoomBy(factor) {
 
 function toggleLabels() {
   showEdgeLabels.value = !showEdgeLabels.value
+  applyHighlight()
+}
+
+function toggleReverseArcs() {
+  showReverseArcs.value = !showReverseArcs.value
   applyHighlight()
 }
 
@@ -481,6 +610,9 @@ onBeforeUnmount(() => {
 watch(() => store.graph, rebuild)
 watch(mergedHighlight, applyHighlight, { deep: true })
 watch(showEdgeLabels, applyHighlight)
+watch(showReverseArcs, applyHighlight)
+watch(supplyMeta, applyHighlight)
+
 watch(() => store.selectedNode, syncSelection)
 watch(() => [store.source, store.sink], applyHighlight)
 </script>

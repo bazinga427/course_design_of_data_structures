@@ -5,7 +5,7 @@
         <span class="logo">图</span>
         <div>
           <h1>图结构综合实验平台</h1>
-          <p>邻接表 / 邻接矩阵 · DFS / BFS 与序列判别 · 最大流最小割 · 随机建图 · 保存与加载</p>
+          <p>邻接表 / 邻接矩阵 · DFS / BFS 与序列判别 · 最大流最小割 · 物流供应链瓶颈分析 · 保存与加载</p>
         </div>
       </div>
 
@@ -40,13 +40,13 @@
 
         <button class="btn" @click="showRandom = true">随机生成</button>
         <button class="btn" @click="saveFile">保存图文件</button>
-
         <span class="badge" :class="backendClass"><i class="dot"></i>{{ backendLabel }}</span>
       </div>
     </header>
 
     <main class="app-body">
       <aside class="side">
+        <SupplyChainPanel />
         <StoragePanel />
         <TraversalPanel />
         <FlowAnimation />
@@ -54,6 +54,7 @@
       <section class="stage">
         <GraphCanvas />
       </section>
+      <FlowNarrator />
     </main>
 
     <!-- ---------------- 随机建图 ---------------- -->
@@ -108,6 +109,8 @@ import GraphCanvas from './components/GraphCanvas.vue'
 import StoragePanel from './components/StoragePanel.vue'
 import TraversalPanel from './components/TraversalPanel.vue'
 import FlowAnimation from './components/FlowAnimation.vue'
+import FlowNarrator from './components/FlowNarrator.vue'
+import SupplyChainPanel from './components/SupplyChainPanel.vue'
 import { sampleGraphs } from './samples/sampleGraphs.js'
 import {
   store,
@@ -177,6 +180,7 @@ async function saveFile() {
   URL.revokeObjectURL(link.href)
   notify('图文件已经导出，可以直接放进项目目录当输入文件', 'success')
 }
+
 
 watch(
   () => store.toast.seq,
@@ -316,6 +320,7 @@ onMounted(async () => {
 
 .side {
   width: 392px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -328,6 +333,15 @@ onMounted(async () => {
   min-width: 0;
 }
 
+@media (max-width: 1600px) {
+  .side {
+    width: 350px;
+  }
+  .app-body :deep(.narrator-col) {
+    width: 300px;
+  }
+}
+
 @media (max-width: 1180px) {
   .app-body {
     flex-direction: column;
@@ -338,6 +352,10 @@ onMounted(async () => {
   }
   .stage {
     min-height: 52vh;
+  }
+  .app-body :deep(.narrator-col) {
+    width: auto;
+    max-height: 46vh;
   }
 }
 </style>

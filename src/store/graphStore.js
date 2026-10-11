@@ -5,6 +5,8 @@
 //    * 当前这张图（store.graph，来自 core 的 snapshot）
 //    * 两个高亮图层：遍历面板写 traversalLayer，最大流面板写 flowLayer，
 //      画布把它们叠起来画（flow 优先级更高）
+//    * 最大流过程的解说状态：flowFrames / flowFrame / flowIndex …
+//      由 FlowAnimation.vue 生成并写入，右侧 FlowNarrator.vue 只读它
 //    * 顶部提示条 toast
 // ============================================================
 
@@ -22,6 +24,12 @@ export function edgeKey(u, v) {
   return `${u}_${v}`
 }
 
+// 反向弧（原图里没有、只存在于残余网络中的那条弧）在图层里用单独的键。
+// 约定和 src/flow/narrator.js 里的 makeEdgeKeyer 保持一致。
+export function reverseEdgeKey(u, v) {
+  return `rev:${u}_${v}`
+}
+
 export const store = reactive({
   backend: 'loading', // loading | wasm | js
   backendLabel: '正在加载算法核心…',
@@ -37,6 +45,16 @@ export const store = reactive({
   flowLayer: emptyLayer(),
   flowResult: null, // 最近一次最大流结果，邻接矩阵面板会顺便显示 flow/cap
 
+  // ---- 最大流过程解说（FlowAnimation 写，FlowNarrator 读）----
+  flowFrames: [], // 解说帧的轻量索引，右侧解说栏画时间线用
+  flowFrame: null, // 当前解说帧（完整数据）
+  flowIndex: -1, // 当前播到第几帧，-1 = 还没开始
+  flowTotal: 0,
+  flowPlaying: false,
+  flowVerified: true, // 过程重放和核心结果对不上时会是 false，界面给个“简化讲解”提示
+  flowControls: null, // 由 FlowAnimation 注册：{ compute, jump, play, pause, step, reset }
+
+  supplyChainMeta: null, // 供应链业务元数据：节点名称、线路说明等，只影响展示和业务解释
   toast: { text: '', type: 'info', seq: 0 },
 })
 
@@ -59,10 +77,21 @@ export async function initCore() {
   return core
 }
 
+/** 清掉所有和“当前这张图”绑定的高亮与解说状态 */
+export function resetFlowNarration() {
+  store.flowFrames = []
+  store.flowFrame = null
+  store.flowIndex = -1
+  store.flowTotal = 0
+  store.flowPlaying = false
+  store.flowVerified = true
+}
+
 function resetFocus() {
   store.traversalLayer = emptyLayer()
   store.flowLayer = emptyLayer()
   store.flowResult = null
+  resetFlowNarration()
 }
 
 async function refreshSnapshot() {
@@ -75,6 +104,7 @@ async function refreshSnapshot() {
   store.selectedNode = null
   store.source = snap.n >= 1 ? 1 : 0
   store.sink = snap.n >= 2 ? snap.n : snap.n
+  store.supplyChainMeta = null
   resetFocus()
   return true
 }
@@ -135,4 +165,8 @@ export function setTraversalLayer(layer) {
 
 export function setFlowLayer(layer) {
   store.flowLayer = layer || emptyLayer()
+}
+
+export function setSupplyChainMeta(meta) {
+  store.supplyChainMeta = meta || null
 }

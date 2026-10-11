@@ -8,10 +8,19 @@
 //    2) 序列合法性判别正确
 //    3) 文件保存 / 再读回来数据不丢
 //    4) 最大流动画里“按增广路累加流量”的算法能算回最终每条边的流量
+//    5) 过程解说（src/flow/narrator.js）重放出来的增广路、残余网络、
+//       最小割，和核心给的每一步完全一致
 // ============================================================
 
 import { createFallbackCore } from '../src/wasm/fallback.js'
 import { sampleGraphs } from '../src/samples/sampleGraphs.js'
+import { buildNarration, arcKey } from '../src/flow/narrator.js'
+import {
+  SUPPLY_CHAIN_SAMPLE,
+  buildGraphTextWithExtraCapacity,
+  buildSupplyChainSummary,
+  formatSupplyRoute,
+} from '../src/domain/supplyChain.js'
 
 let passed = 0
 const failures = []
@@ -201,6 +210,142 @@ ok('空序列判别会被拒绝', core.checkSequence(1, '').ok === false)
   // 0 开始编号的文件也不能乱写超范围的编号
   ok('0 开始编号里出现超出 n 的编号会被拒绝', core.loadText('3 2 1\n0 1\n1 5\n', 'x').ok === false)
 }
+
+// ------------------------------------------------------------
+//  8. 过程解说：重放出来的增广路 / 残余网络 / 最小割必须和核心一致
+//     （右侧「过程解说」栏就是拿这些帧渲染的）
+// ------------------------------------------------------------
+for (const [name, text, s, t] of [
+  ['graph.txt 1->6', graph1.text, 1, 6],
+  ['graph2.txt 1->5', graph2.text, 1, 5],
+  ['rev.txt 1->4', rev.text, 1, 4],
+]) {
+  core.loadText(text, name)
+  const snap = core.snapshot()
+  const res = core.maxFlow(s, t)
+  const { frames, verified } = buildNarration(res, snap)
+
+  ok(`解说重放和核心一致（${name}）`, verified === true)
+  ok(`解说帧不为空（${name}）`, frames.length > 0)
+
+  eq(
+    `解说的增广路和核心一样（${name}）`,
+    frames.filter((f) => f.kind === 'route').map((f) => f.path),
+    res.steps.map((st) => st.path),
+  )
+  eq(
+    `解说的瓶颈和核心一样（${name}）`,
+    frames.filter((f) => f.kind === 'route').map((f) => f.bottleneck),
+    res.steps.map((st) => st.bottleneck),
+  )
+  ok(
+    `沿路每条弧的余额都正好减掉瓶颈（${name}）`,
+    frames
+      .filter((f) => f.kind === 'push')
+      .every((f) => f.balance && f.balance.before - f.balance.after === f.bottleneck),
+  )
+
+  const last = frames[frames.length - 1]
+  eq(
+    `解说最后给出的 S / T 和核心一样（${name}）`,
+    [last.sets.S, last.sets.T],
+    [res.sourceSide, res.sinkSide],
+  )
+  eq(`解说最后给出的割边和核心一样（${name}）`, last.cutEdges, res.cutEdges)
+
+  // 帧里重放出的净流量 == 核心算出的每条弧的流量
+  let flowMatched = true
+  for (const e of res.edgeFlow) {
+    const net = last.flows[arcKey(e.u, e.v)] || 0
+    if (net !== e.flow) flowMatched = false
+  }
+  ok(`解说重放的净流量 == 核心的流量（${name}）`, flowMatched)
+
+  // 中间每一帧的累计流量都要 ≤ 最大流，而且不能倒退
+  let monotone = true
+  let previous = 0
+  for (const f of frames) {
+    const flow = f.totals ? f.totals.flow : 0
+    if (flow < previous) monotone = false
+    if (flow > res.value) monotone = false
+    previous = flow
+  }
+  ok(`解说的总流量单调不减且不超过最大流（${name}）`, monotone)
+
+  // 每一帧的字段都要齐全，右侧解说栏直接拿这些渲染
+  const fieldsOk = frames.every(
+    (f) =>
+      typeof f.kind === 'string' &&
+      typeof f.phase === 'string' &&
+      typeof f.group === 'string' &&
+      typeof f.title === 'string' &&
+      typeof f.label === 'string' &&
+      typeof f.text === 'string' &&
+      f.focusNodes &&
+      f.focusEdges &&
+      Array.isArray(f.changes) &&
+      f.flows &&
+      f.totals,
+  )
+  ok(`每一帧的字段都齐全（${name}）`, fieldsOk)
+}
+
+// 反向边撤流的细节：rev.txt 第二轮沿 3→2 推流（图上本来没有这条弧），
+// 所以 3→2 的残余容量应该减少，而 2→3 的残余容量应该“加”回来
+{
+  core.loadText(rev.text, 'rev.txt')
+  const snap = core.snapshot()
+  const res = core.maxFlow(1, 4)
+  const { frames } = buildNarration(res, snap)
+  const target = frames.find(
+    (f) => f.kind === 'push' && f.balance && f.balance.u === 3 && f.balance.v === 2,
+  )
+
+  ok('解说里有沿反向弧 3→2 推流的那一步', !!target)
+  if (target) {
+    const routeFrame = frames.find((f) => f.kind === 'route' && f.round === target.round)
+    const netBefore = routeFrame ? routeFrame.flows['2,3'] || 0 : 0
+    const netAfter = target.flows['2,3'] || 0
+    ok('3→2 的余额被扣减', target.balance.after < target.balance.before)
+    ok('扣减量 == 瓶颈', target.balance.delta === target.bottleneck)
+    ok('反向弧 2→3 的净流量被撤回', netBefore - netAfter === target.bottleneck)
+    ok('推反向弧时用的是反向弧专用的图层键', 'rev:3_2' in target.focusEdges)
+  }
+}
+
+// ------------------------------------------------------------
+//  9. 供应链应用：最大可交付量、瓶颈割集、扩容模拟
+// ------------------------------------------------------------
+core.loadText(SUPPLY_CHAIN_SAMPLE.text, 'supply-chain')
+const scSnap = core.snapshot()
+eq('供应链示例规模', [scSnap.n, scSnap.edges.length, scSnap.directed], [12, 19, 1])
+
+const scRes = core.maxFlow(SUPPLY_CHAIN_SAMPLE.source, SUPPLY_CHAIN_SAMPLE.sink)
+eq('供应链示例最大流 = 最小割', [scRes.value, scRes.cutCapacity, scRes.correct], [19, 19, true])
+
+const scSummary = buildSupplyChainSummary(scRes, scSnap, SUPPLY_CHAIN_SAMPLE)
+ok('供应链摘要可生成', !!scSummary)
+eq(
+  '供应链瓶颈线路',
+  scSummary.cutEdges.map((e) => e.key),
+  ['4_6', '5_8', '7_9', '7_10'],
+)
+eq(
+  '供应链瓶颈容量之和 = 最大可交付量',
+  scSummary.cutEdges.reduce((sum, e) => sum + e.cap, 0),
+  19,
+)
+ok('瓶颈线路会翻译成业务名称', scSummary.cutEdges[0].label.includes('上海总仓'))
+eq(
+  '补货路径会翻译成节点简称',
+  formatSupplyRoute([1, 2, 4, 6, 9], SUPPLY_CHAIN_SAMPLE),
+  '供应 → 华东厂 → 上海仓 → 苏州站 → 上海店',
+)
+
+const expanded = buildGraphTextWithExtraCapacity(scSnap, 4, 6, 5)
+core.loadText(expanded, 'supply-chain-expanded')
+const scExpanded = core.maxFlow(SUPPLY_CHAIN_SAMPLE.source, SUPPLY_CHAIN_SAMPLE.sink)
+ok('扩容瓶颈线路后最大可交付量提升', scExpanded.value > scRes.value)
 
 // ------------------------------------------------------------
 //  汇总
