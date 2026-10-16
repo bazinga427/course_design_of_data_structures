@@ -15,6 +15,7 @@
 import { createFallbackCore } from '../src/wasm/fallback.js'
 import { sampleGraphs } from '../src/samples/sampleGraphs.js'
 import { buildNarration, arcKey } from '../src/flow/narrator.js'
+import { store, edgeKey, reverseEdgeKey } from '../src/store/graphStore.js'
 import {
   SUPPLY_CHAIN_SAMPLE,
   buildGraphTextWithExtraCapacity,
@@ -253,6 +254,37 @@ for (const [name, text, s, t] of [
   )
   eq(`解说最后给出的割边和核心一样（${name}）`, last.cutEdges, res.cutEdges)
 
+  // 最小割不能只是“最后闪一下”，必须一步一步来：整理 → 扩散 → 割
+  const capOf = (u, v) => {
+    if (snap.matrix) return (snap.matrix[u] && snap.matrix[u][v]) || 0
+    const e = snap.edges.find((x) => x.u === u && x.v === v)
+    return e ? e.cap : 0
+  }
+  const pruneFrames = frames.filter((f) => f.kind === 'prune')
+  const growFrames = frames.filter((f) => f.kind === 'grow')
+  eq(`最小割第一步只有一帧“整理残余网络”（${name}）`, pruneFrames.length, 1)
+  ok(`最小割有“分点集”的扩散帧（${name}）`, growFrames.length >= 1)
+  ok(`最后一帧才是割边那一帧（${name}）`, last.kind === 'cut')
+  ok(`割边那一帧会把反向弧收起来（${name}）`, last.hideReverseArcs === true)
+  ok(
+    `擦掉的弧余额确实都是 0（${name}）`,
+    pruneFrames.every((f) =>
+      f.droppedEdges.every((key) => {
+        const [u, v] = key.replace(/^rev:/, '').split('_').map(Number)
+        return capOf(u, v) - (last.flows[arcKey(u, v)] || 0) <= 0
+      }),
+    ),
+  )
+  ok(
+    `扩散出来的点都落在核心给的 S 里（${name}）`,
+    growFrames.every((f) => f.growInfo.seen.every((v) => res.sourceSide.includes(v))),
+  )
+  eq(
+    `扩散到最后一层，S 正好等于核心给的 S 侧（${name}）`,
+    [...growFrames[growFrames.length - 1].growInfo.seen].sort((a, b) => a - b),
+    res.sourceSide,
+  )
+
   // 帧里重放出的净流量 == 核心算出的每条弧的流量
   let flowMatched = true
   for (const e of res.edgeFlow) {
@@ -311,6 +343,81 @@ for (const [name, text, s, t] of [
     ok('反向弧 2→3 的净流量被撤回', netBefore - netAfter === target.bottleneck)
     ok('推反向弧时用的是反向弧专用的图层键', 'rev:3_2' in target.focusEdges)
   }
+}
+
+// ------------------------------------------------------------
+//  8b. 最小割动画：三步的顺序、擦掉的弧、S 是层序扩散出来的
+// ------------------------------------------------------------
+{
+  core.loadText(graph1.text, 'graph.txt')
+  const snapCut = core.snapshot()
+  const resCut = core.maxFlow(1, 6)
+  const { frames } = buildNarration(resCut, snapCut)
+  const prune = frames.find((f) => f.kind === 'prune')
+  eq(
+    '最小割三步的帧序是 整理 → 扩散 → 割',
+    frames.slice(frames.indexOf(prune)).map((f) => f.kind),
+    ['prune', 'grow', 'cut'],
+  )
+  eq(
+    '整理这一步擦掉的弧里包含两条割边 1_2 / 1_3',
+    prune.droppedEdges.filter((k) => k === '1_2' || k === '1_3').sort(),
+    ['1_2', '1_3'],
+  )
+  ok(
+    '擦掉的只是一部分弧，没把整张图擦光',
+    prune.droppedEdges.length > 0 && prune.droppedEdges.length < snapCut.edges.length,
+  )
+  ok(
+    '整理残余网络这一帧带着“擦掉哪几条弧”的清单',
+    Array.isArray(prune.droppedEdges) && prune.droppedEdges.length > 0,
+  )
+
+  // rev.txt：第二轮沿 3→2 推流之后，反向弧 3→2 的余额变成 0（甚至为负），
+  // 它就是“没用到的反向弧”，整理那一步要把它擦掉
+  core.loadText(rev.text, 'rev.txt')
+  const resRev = core.maxFlow(1, 4)
+  const { frames: revFrames } = buildNarration(resRev, core.snapshot())
+  const revPrune = revFrames.find((f) => f.kind === 'prune')
+  ok('rev.txt 里余额用完的反向弧 rev:3_2 会被擦掉', revPrune.droppedEdges.includes('rev:3_2'))
+}
+
+// ------------------------------------------------------------
+//  8c. 解说帧里的图层键，在画布上必须都有对应的图元
+//      narrator 算出来的键要和 GraphCanvas 建图元时用的键一致，
+//      否则会出现「高亮了一个根本不存在的元素」这种静默失效：
+//      面板文字在讲最小割，画布上一个颜色都不变。
+// ------------------------------------------------------------
+for (const [name, text, s, t] of [
+  ['graph.txt 1->6', graph1.text, 1, 6],
+  ['graph2.txt 1->5', graph2.text, 1, 5],
+  ['rev.txt 1->4', rev.text, 1, 4],
+]) {
+  core.loadText(text, name)
+  const snap = core.snapshot()
+  store.graph = snap // edgeKey / reverseEdgeKey 要看有向无向
+  const { frames } = buildNarration(core.maxFlow(s, t), snap)
+
+  // 照 GraphCanvas.buildElements() 的规则，列出画布上真实存在的图层键
+  const listed = new Set(snap.edges.map((e) => `${e.u}_${e.v}`))
+  const valid = new Set()
+  for (const e of snap.edges) {
+    valid.add(edgeKey(e.u, e.v))
+    if (snap.edges.length <= 400 && !listed.has(`${e.v}_${e.u}`)) {
+      valid.add(reverseEdgeKey(e.v, e.u))
+    }
+  }
+
+  const keys = []
+  for (const f of frames) {
+    keys.push(...Object.keys(f.focusEdges || {}))
+    keys.push(...(f.droppedEdges || []))
+  }
+  eq(
+    `解说帧用到的图层键在画布上都有图元（${name}）`,
+    keys.filter((k) => !valid.has(k)),
+    [],
+  )
 }
 
 // ------------------------------------------------------------

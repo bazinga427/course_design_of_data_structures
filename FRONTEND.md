@@ -129,6 +129,10 @@ Ford-Fulkerson 最大流 + 最小割，`steps` 里是每一次增广，动画按
 `correct` 是程序自己校的：最小割容量是不是等于最大流（最大流最小割定理）。
 `edgeFlow` 里的 `flow` 是净流量，无向图可能出现负数，前端显示时按 0 处理。
 
+最小割那几步动画不在核心里：核心只给 `sourceSide` / `sinkSide` / `cutEdges`，
+前端 `src/flow/narrator.js` 照着 `steps` 把残余网络重放一遍，再自己算出
+「擦掉余额 0 的弧 → 从 s 扩散分点集 → 割边求和」这三帧。
+
 ## 这两个核心怎么保证算得一样？
 
 ```bat

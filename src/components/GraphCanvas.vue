@@ -63,6 +63,7 @@
       <span class="legend"><i style="background: #34d399"></i>正在推流 / 有流量</span>
       <span class="legend"><i style="background: #38bdf8"></i>反向弧（余额 = 可撤回的流）</span>
       <span class="legend"><i style="background: #f472b6"></i>割边</span>
+      <span class="legend"><i style="background: #475569"></i>余额 0（被擦掉）</span>
       <span class="legend"><i style="background: #60a5fa"></i>S 侧 / 源点</span>
       <span class="legend"><i style="background: #a78bfa"></i>T 侧 / 汇点</span>
     </div>
@@ -336,6 +337,18 @@ function buildStylesheet() {
     },
   },
   {
+    // 「整理残余网络」那一步被擦掉的弧：余额已经是 0，画成灰色虚线
+    selector: 'edge.dropped',
+    style: {
+      'line-color': '#475569',
+      'target-arrow-color': '#475569',
+      'line-style': 'dashed',
+      width: 1.6 * u,
+      opacity: 0.45,
+      'z-index': 4,
+    },
+  },
+  {
     selector: 'edge.cut',
     style: {
       'line-color': '#f472b6',
@@ -471,7 +484,7 @@ function applyHighlight() {
   const g = store.graph
   c.batch(() => {
     c.elements().removeClass(
-      'visited current frontier tree path cut flowEdge probe deadend update setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
+      'visited current frontier tree path cut dropped flowEdge probe deadend update setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
     )
 
     c.nodes().forEach((node) => {
