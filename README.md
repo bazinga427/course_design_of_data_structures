@@ -15,7 +15,7 @@
 | --- | --- |
 | `index.html` / `vite.config.js` / `package.json` | 前端工程配置（Vite） |
 | `src/main.js`、`src/App.vue` | 页面入口与整体布局 |
-| `src/components/GraphCanvas.vue` | **图结构可视化**：Cytoscape 画布、5 种布局、点大小、缩放、导出 PNG |
+| `src/components/GraphCanvas.vue` | **图结构可视化**：Cytoscape 画布、5 种布局、点大小、缩放、边权标签 / 残量网络 / 反向边三个显示开关、导出 PNG |
 | `src/components/StoragePanel.vue` | 邻接表 / 邻接矩阵（容量矩阵）/ 边表 |
 | `src/components/TraversalPanel.vue` | DFS / BFS 计算、单步播放、遍历序列合法性判别 |
 | `src/components/FlowAnimation.vue` | 最大流最小割计算、按增广路播放、残余网络视图、一键看最小割（整理 → 分点集 → 割边） |

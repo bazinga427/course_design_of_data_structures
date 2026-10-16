@@ -41,12 +41,23 @@
         </span>
         <div class="field">
           <span>边上显示</span>
-          <button class="btn tiny" :class="{ active: view === 'res' }" @click="view = 'res'">
+          <button
+            class="btn tiny"
+            :class="{ active: view === 'res' }"
+            :disabled="!store.showResidual"
+            @click="view = 'res'"
+          >
             余额 / 总容量
           </button>
-          <button class="btn tiny" :class="{ active: view === 'flow' }" @click="view = 'flow'">
+          <button
+            class="btn tiny"
+            :class="{ active: view === 'flow' }"
+            :disabled="!store.showResidual"
+            @click="view = 'flow'"
+          >
             流量 / 总容量
           </button>
+          <span class="hint">（要画布工具栏开着「残量网络」）</span>
         </div>
       </div>
 
@@ -103,6 +114,7 @@
         <p class="hint">
           边上写的是「余 x / 总 y」：x 是余额（这条弧还能再推多少），y 是权重（这条弧的容量）。
           切到「流量 / 总容量」就变成「流 x / 总 y」。
+          画布工具栏的「残量网络」关掉之后，边上就只写原图的容量，方便对照原图 / 残量网络。
           红色 = 本条增广路，绿色加粗 = 正在推流的这条弧，粉色虚线 = 割边，
           蓝色 S 侧（源点）/ 紫色 T 侧（汇点）。
           青蓝虚线 = 反向弧：原图里没有这条弧，它的余额就是已经推过去的流里能撤回多少。
@@ -212,15 +224,19 @@ function applyLayer() {
     if (!layer.edges[k] && netOf(e.u, e.v) > 0) layer.edges[k] = 'flowEdge'
   }
 
-  // 弧上的字：这一帧专门给的标注优先，其次是“流量/容量”或“余 / 退”
-  for (const e of g.edges) {
-    const k = edgeKey(e.u, e.v)
-    const net = netOf(e.u, e.v)
-    const flowNow = Math.max(0, net)
-    layer.edgeLabels[k] =
-      view.value === 'flow'
-        ? `流${flowNow}/总${e.cap}`
-        : `余${e.cap - net}/总${e.cap}`
+  // 弧上的字：这一帧专门给的标注优先，其次是“流量/容量”或“余 / 退”。
+  // 画布工具栏把「残量网络」关掉时（store.showResidual = false）这里干脆不给标注，
+  // 画布就按原图只写容量 —— 两种视角切换的是同一批数字，不是两套逻辑。
+  if (store.showResidual) {
+    for (const e of g.edges) {
+      const k = edgeKey(e.u, e.v)
+      const net = netOf(e.u, e.v)
+      const flowNow = Math.max(0, net)
+      layer.edgeLabels[k] =
+        view.value === 'flow'
+          ? `流${flowNow}/总${e.cap}`
+          : `余${e.cap - net}/总${e.cap}`
+    }
   }
 
   // 反向弧：只要正方向推过流（净流量 > 0），残余网络里反向的那条弧就有余额，
@@ -396,6 +412,8 @@ watch(index, () => {
   publish()
 })
 watch(view, applyLayer)
+// 画布工具栏切换「残量网络」时，边标签口径要跟着重算一遍
+watch(() => store.showResidual, applyLayer)
 
 watch(
   () => [store.source, store.sink],
