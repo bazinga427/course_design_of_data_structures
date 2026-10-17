@@ -29,6 +29,9 @@
         <button class="btn" :disabled="!total || !playing || stage === 'residual'" @click="pause">暂停</button>
         <button class="btn" :disabled="!total || stage === 'residual'" @click="step">单步</button>
         <button class="btn" :disabled="!total" @click="reset">重置</button>
+        <button class="btn" :disabled="!total || minCutIndex < 0" @click="showMinCut">
+          一键看最小割
+        </button>
       </div>
 
       <div class="row" v-if="result">
@@ -53,12 +56,23 @@
         </span>
         <div class="field">
           <span>边上显示</span>
-          <button class="btn tiny" :class="{ active: view === 'res' }" @click="view = 'res'">
+          <button
+            class="btn tiny"
+            :class="{ active: view === 'res' }"
+            :disabled="!store.showResidual"
+            @click="view = 'res'"
+          >
             余额 / 总容量
           </button>
-          <button class="btn tiny" :class="{ active: view === 'flow' }" @click="view = 'flow'">
+          <button
+            class="btn tiny"
+            :class="{ active: view === 'flow' }"
+            :disabled="!store.showResidual"
+            @click="view = 'flow'"
+          >
             流量 / 总容量
           </button>
+          <span class="hint">（要画布工具栏开着「残量网络」）</span>
         </div>
       </div>
 
@@ -105,19 +119,28 @@
           </button>
           <button
             class="step-item finish"
-            :class="{ current: finished }"
-            @click="jumpToCut"
+            :class="{ current: inMinCut }"
+            @click="showMinCut"
           >
-            <span>完成 · 显示最小割</span>
+            <span>最小割：擦掉没余额的弧 → 分成 S / T → 割边求和</span>
           </button>
         </div>
 
         <p class="hint" v-if="stage === 'augment'">
           边上写的是「余 x / 总 y」：x 是余额（这条弧还能再推多少），y 是权重（这条弧的容量）。
           切到「流量 / 总容量」就变成「流 x / 总 y」。
+          画布工具栏的「残量网络」关掉之后，边上就只写原图的容量，方便对照原图 / 残量网络。
           红色 = 本条增广路，绿色加粗 = 正在推流的这条弧，粉色虚线 = 割边，
           蓝色 S 侧（源点）/ 紫色 T 侧（汇点）。
           青蓝虚线 = 反向弧：原图里没有这条弧，它的余额就是已经推过去的流里能撤回多少。
+          灰色虚线 = 余额已经是 0 的弧（推满的正向弧、撤回量用完的反向弧）。
+        </p>
+
+        <p class="hint" v-if="stage === 'augment'">
+          最后三步就是「最小割」的推导过程：<b>① 整理残余网络</b>先把余额 = 0 的弧擦掉
+          → <b>② 分点集</b>从 s 只沿余额 &gt; 0 的弧一层层往外走，走到的点归 S
+          → <b>③ 割</b>剩下的点归 T，S→T 的弧标成粉色割边，容量和正好等于最大流。
+          点「一键看最小割」直接跳到这三步。
         </p>
         <p class="hint" v-else>
           残量网络：每条弧画的是「容量 − 已推流量」。
@@ -165,7 +188,14 @@ const current = computed(() =>
   index.value >= 0 && index.value < frames.value.length ? frames.value[index.value] : null,
 )
 const currentRoundIndex = computed(() => (current.value ? current.value.roundIndex : -1))
-const finished = computed(() => total.value > 0 && index.value >= total.value - 1)
+// 最小割那一段：整理残余网络 → 分点集 → 割边，三帧合起来才是一个完整的最小割
+const MIN_CUT_PHASES = ['prune', 'grow', 'cut']
+const inMinCut = computed(
+  () => !!current.value && MIN_CUT_PHASES.includes(current.value.phase),
+)
+const minCutIndex = computed(() =>
+  frames.value.findIndex((f) => MIN_CUT_PHASES.includes(f.phase)),
+)
 
 // 直接在面板上改 store 里的源点 / 汇点，画布上的蓝圈紫圈会跟着动
 const sourceValue = computed({
@@ -213,6 +243,11 @@ function applyLayer() {
   if (f) {
     Object.assign(layer.nodes, f.focusNodes || {})
     Object.assign(layer.edges, f.focusEdges || {})
+    // 「整理残余网络」那一帧：余额已经是 0 的弧画成灰色（= 被擦掉）。
+    // 已经被本帧单独标过的弧（增广路 / 割边）不覆盖。
+    for (const key of f.droppedEdges || []) {
+      if (!layer.edges[key]) layer.edges[key] = 'dropped'
+    }
   }
 
   // 已经推过流、又没有被本帧特别标出来的弧，统一画成绿色
@@ -221,20 +256,25 @@ function applyLayer() {
     if (!layer.edges[k] && netOf(e.u, e.v) > 0) layer.edges[k] = 'flowEdge'
   }
 
-  // 弧上的字：这一帧专门给的标注优先，其次是“流量/容量”或“余 / 退”
-  for (const e of g.edges) {
-    const k = edgeKey(e.u, e.v)
-    const net = netOf(e.u, e.v)
-    const flowNow = Math.max(0, net)
-    layer.edgeLabels[k] =
-      view.value === 'flow'
-        ? `流${flowNow}/总${e.cap}`
-        : `余${e.cap - net}/总${e.cap}`
+  // 弧上的字：这一帧专门给的标注优先，其次是“流量/容量”或“余 / 退”。
+  // 画布工具栏把「残量网络」关掉时（store.showResidual = false）这里干脆不给标注，
+  // 画布就按原图只写容量 —— 两种视角切换的是同一批数字，不是两套逻辑。
+  if (store.showResidual) {
+    for (const e of g.edges) {
+      const k = edgeKey(e.u, e.v)
+      const net = netOf(e.u, e.v)
+      const flowNow = Math.max(0, net)
+      layer.edgeLabels[k] =
+        view.value === 'flow'
+          ? `流${flowNow}/总${e.cap}`
+          : `余${e.cap - net}/总${e.cap}`
+    }
   }
 
   // 反向弧：只要正方向推过流（净流量 > 0），残余网络里反向的那条弧就有余额，
   // 这些余额就是“可以撤回来的流量”，同样标成「余 x / 总 y」画到图上。
-  if (g.edges.length <= 400) {
+  // 最小割那一帧（f.hideReverseArcs）把反向弧整体收起来，画面只剩 S / T / 割边
+  if (!(f && f.hideReverseArcs) && g.edges.length <= 400) {
     const listed = new Set(g.edges.map((e) => `${e.u}_${e.v}`))
     for (const e of g.edges) {
       if (listed.has(`${e.v}_${e.u}`)) continue // 反方向的弧本来就在图里
@@ -340,18 +380,19 @@ function jumpToRound(roundIndex) {
   if (k >= 0) jump(k)
 }
 
-// 「完成 · 显示最小割」：直接跳到最后一帧（最小割那帧），
-// 不能按 roundIndex 找第一帧，否则会停在它前面的「结束判定」上
-function jumpToCut() {
-  const k = frames.value.findIndex((f) => f.kind === 'cut')
-  jump(k >= 0 ? k : frames.value.length - 1)
-}
-
 // 残量网络 / 增广过程 两个阶段来回切
 function toggleResidual() {
   if (!result.value) return
   stopTimer()
   stage.value = stage.value === 'residual' ? 'augment' : 'residual'
+}
+
+// 「一键看最小割」：跳到最小割第一帧（整理残余网络），再从头播到割边那一帧
+function showMinCut() {
+  const k = minCutIndex.value
+  if (k < 0) return
+  jump(k)
+  play()
 }
 
 function compute() {
@@ -436,6 +477,8 @@ watch(index, () => {
 })
 watch(view, applyLayer)
 watch(stage, applyLayer)
+// 画布工具栏切换「残量网络」时，边标签口径要跟着重算一遍
+watch(() => store.showResidual, applyLayer)
 
 watch(
   () => [store.source, store.sink],

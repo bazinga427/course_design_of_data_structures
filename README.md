@@ -15,10 +15,10 @@
 | --- | --- |
 | `index.html` / `vite.config.js` / `package.json` | 前端工程配置（Vite） |
 | `src/main.js`、`src/App.vue` | 页面入口与整体布局 |
-| `src/components/GraphCanvas.vue` | **图结构可视化**：Cytoscape 画布、5 种布局、点大小、缩放、导出 PNG |
+| `src/components/GraphCanvas.vue` | **图结构可视化**：Cytoscape 画布、5 种布局、点大小、缩放、边权标签 / 残量网络 / 反向边三个显示开关、导出 PNG |
 | `src/components/StoragePanel.vue` | 邻接表 / 邻接矩阵（容量矩阵）/ 边表 |
 | `src/components/TraversalPanel.vue` | DFS / BFS 计算、单步播放、遍历序列合法性判别 |
-| `src/components/FlowAnimation.vue` | 最大流最小割计算、按增广路播放、残余网络视图 |
+| `src/components/FlowAnimation.vue` | 最大流最小割计算、按增广路播放、残余网络视图、一键看最小割（整理 → 分点集 → 割边） |
 | `src/components/SupplyChainPanel.vue` | **物流与供应链应用**：载入示例、最大可交付量、瓶颈割集、扩容模拟、线路利用率 |
 | `src/domain/supplyChain.js` | 供应链业务层：节点角色、线路名称、业务解释和供应链示例数据 |
 | `src/store/graphStore.js` | 全页面共用的状态（当前图、两个高亮图层、提示条） |
@@ -99,6 +99,19 @@ PyCharm 内置服务器）里都能跑。
 `1/当前缩放`（`GraphCanvas.vue` 里的 `buildStylesheet`），按屏幕像素来算，
 点在任何布局、任何缩放下都是同一个大小（默认 28px，工具栏「点大小」可调）。
 
+**最小割的动画**：最大流算完之后不会直接跳出一张割边图，而是按三步播（`src/flow/narrator.js`
+里 `prune` / `grow` / `cut` 三种帧）：
+
+1. **整理残余网络**：把余额 = 0 的弧擦掉 —— 推满的正向弧推不动了、撤回量用完的反向弧
+   也撤不回来了，这些弧在图上变成灰色虚线；
+2. **分点集**：从 s 出发，只沿「余额 > 0」的弧（青色）一层层往外走（BFS 层序），
+   走到的点标成 S（蓝色），刚走到的点用橙色点出来；
+3. **割**：剩下没走到的点归 T（紫色），原图里所有 S→T 的弧标成粉色割边，
+   容量和正好等于最大流。
+
+割边一定都在第 1 步被擦掉的那批弧里 —— 因为 S→T 的弧在残余网络里的余额必然是 0，
+这正是「最大流 = 最小割」在程序里的样子。面板上的「一键看最小割」直接跳到这三步重播。
+
 **力导向自动降级**：点数超过 260 时 cose 布局（O(n²)）太慢，自动换成环形布局并提示。
 
 **邻接矩阵上限**：`n > 150` 时矩阵不铺表格（`matrixOmitted`），算法照常计算。
@@ -106,6 +119,6 @@ PyCharm 内置服务器）里都能跑。
 ## 自检
 
 ```bat
-npm run test:core             :: 纯 JS：93 项（遍历序列、最大流、最小割、供应链示例、保存再读回、各种图文件）
+npm run test:core             :: 纯 JS：122 项（遍历序列、最大流、最小割、最小割动画帧、供应链示例、保存再读回、各种图文件）
 node tools/parity/compare.mjs :: 编译 C++ 核心跑一遍，和 JS 兜底实现逐字段对比（160 项）
 ```

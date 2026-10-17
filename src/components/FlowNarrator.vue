@@ -60,7 +60,8 @@ const percent = computed(() =>
 )
 
 // 解说栏只回答四件事：第几条路、什么路线、当前哪个点到哪个点、余额减多少。
-// 最小割那一帧额外把 S/T 和割边列出来，方便核对容量和。
+// 最小割分三步播：① 整理残余网络（擦掉余额 0 的弧）② 分点集（从 s 往外扩散）
+// ③ 割（剩下的点归 T，S→T 的弧就是割边），每一步都把关键数字列出来，方便核对容量和。
 const view = computed(() => {
   const f = frame.value
   if (!f) return { head: '', rows: [] }
@@ -72,7 +73,9 @@ function graphFrameView(f) {
   let head = ''
   if (f.kind === 'init') head = '初始化'
   else if (f.kind === 'noPath') head = '结束判定 · 没有增广路了'
-  else if (f.kind === 'cut') head = `最小割 = ${f.totals.cutCapacity}`
+  else if (f.kind === 'prune') head = '最小割 ① · 整理残余网络'
+  else if (f.kind === 'grow') head = `最小割 ② · 分点集（第 ${f.growInfo ? f.growInfo.level : 1} 层）`
+  else if (f.kind === 'cut') head = `最小割 ③ · 割边容量和 = ${f.totals.cutCapacity}`
   else head = `第 ${f.round} 条增广路`
 
   if (f.path && f.path.length > 1) rows.push({ k: '路线', v: f.path.join(' → ') })
@@ -81,6 +84,20 @@ function graphFrameView(f) {
   if (f.kind === 'push' && f.balance) {
     const b = f.balance
     rows.push({ k: '余额', v: `${b.before} → ${b.after}（减 ${b.delta}）` })
+  }
+  if (f.kind === 'prune' && f.droppedEdges) {
+    rows.push({
+      k: '擦掉',
+      v: `${f.droppedEdges.length} 条余额 = 0 的弧（推满的正向弧、撤完的反向弧）`,
+    })
+  }
+  if (f.kind === 'grow' && f.growInfo) {
+    const added = f.growInfo.added
+    rows.push({
+      k: '新走到',
+      v: added.length ? `{ ${added.join(', ')} }` : '没有：从源点一条余额 > 0 的弧都走不出去',
+    })
+    rows.push({ k: '已归 S', v: `{ ${f.growInfo.seen.join(', ')} }` })
   }
   if (f.sets) rows.push({ k: 'S / T', v: `{ ${f.sets.S.join(', ')} }  /  { ${f.sets.T.join(', ')} }` })
   if (f.kind === 'cut') rows.push({ k: '割边', v: f.cutSummary })
@@ -98,8 +115,12 @@ const shortLabel = (f) => {
       return `${f.balance.u}→${f.balance.v} 余额 ${f.balance.before}→${f.balance.after}`
     case 'noPath':
       return '结束判定'
+    case 'prune':
+      return '① 整理残余网络'
+    case 'grow':
+      return `② ${f.label}`
     case 'cut':
-      return `割 = ${f.cutCapacity}`
+      return `③ 割 = ${f.cutCapacity}`
     default:
       return f.label
   }
@@ -184,6 +205,12 @@ watch(index, async () => {
 .progress i.stop {
   background: linear-gradient(90deg, #fb923c, #f87171);
 }
+.progress i.prune {
+  background: linear-gradient(90deg, #64748b, #94a3b8);
+}
+.progress i.grow {
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+}
 .progress i.cut {
   background: linear-gradient(90deg, #a78bfa, #f472b6);
 }
@@ -200,6 +227,12 @@ watch(index, async () => {
 }
 .head-line.stop {
   border-left-color: var(--orange);
+}
+.head-line.prune {
+  border-left-color: #94a3b8;
+}
+.head-line.grow {
+  border-left-color: #60a5fa;
 }
 .head-line.cut {
   border-left-color: var(--violet);
@@ -320,6 +353,12 @@ watch(index, async () => {
 }
 .tl-dot.stop {
   background: var(--orange);
+}
+.tl-dot.prune {
+  background: #94a3b8;
+}
+.tl-dot.grow {
+  background: #60a5fa;
 }
 .tl-dot.cut {
   background: var(--violet);

@@ -40,6 +40,9 @@
         <button class="btn tiny" :class="{ active: showEdgeLabels }" @click="toggleLabels">
           边权标签
         </button>
+        <button class="btn tiny" :class="{ active: showResidual }" @click="toggleResidual">
+          残量网络
+        </button>
         <button class="btn tiny" :class="{ active: showReverseArcs }" @click="toggleReverseArcs">
           反向边
         </button>
@@ -55,7 +58,7 @@
     </div>
 
     <div class="canvas-legend">
-      <span class="legend"><b class="mono">余x/总y</b> = 余额 / 权重</span>
+      <span class="legend"><b class="mono">余x/总y</b> = 余额 / 权重（工具栏「残量网络」可切回只显示容量）</span>
       <span class="legend"><i style="background: #0e7490"></i>已访问</span>
       <span class="legend"><i style="background: #fbbf24"></i>当前点</span>
       <span class="legend"><i style="background: #22d3ee"></i>遍历树边</span>
@@ -64,6 +67,7 @@
       <span class="legend"><i style="background: #2b3a54"></i>已饱和（余量 0）</span>
       <span class="legend"><i style="background: #38bdf8"></i>反向弧（余额 = 可撤回的流）</span>
       <span class="legend"><i style="background: #f472b6"></i>割边</span>
+      <span class="legend"><i style="background: #475569"></i>余额 0（被擦掉）</span>
       <span class="legend"><i style="background: #60a5fa"></i>S 侧 / 源点</span>
       <span class="legend"><i style="background: #a78bfa"></i>T 侧 / 汇点</span>
     </div>
@@ -83,6 +87,14 @@ const layoutId = ref('force')
 const showEdgeLabels = ref(true)
 // 反向弧（残余网络里用来撤回流量的弧）默认显示，工具栏可以关掉
 const showReverseArcs = ref(true)
+// 边上的数字是「余 x / 总 y」（残量网络视角）还是原图的容量（原图视角）。
+// 放在 store 里是因为最大流面板也在算边标签，两边必须用同一个口径。
+const showResidual = computed({
+  get: () => store.showResidual,
+  set: (v) => {
+    store.showResidual = v
+  },
+})
 // 点在屏幕上画多大（像素）。这个是屏幕像素，不是“模型坐标”，
 // 所以换布局、缩放都不会变；工具栏里的「点大小」就是改这个值。
 const nodeSize = ref(28)
@@ -359,6 +371,18 @@ function buildStylesheet() {
     },
   },
   {
+    // 「整理残余网络」那一步被擦掉的弧：余额已经是 0，画成灰色虚线
+    selector: 'edge.dropped',
+    style: {
+      'line-color': '#475569',
+      'target-arrow-color': '#475569',
+      'line-style': 'dashed',
+      width: 1.6 * u,
+      opacity: 0.45,
+      'z-index': 4,
+    },
+  },
+  {
     selector: 'edge.cut',
     style: {
       'line-color': '#f472b6',
@@ -505,7 +529,7 @@ function applyHighlight() {
   const g = store.graph
   c.batch(() => {
     c.elements().removeClass(
-      'visited current frontier tree path cut risk flowEdge probe deadend update residualArc zeroResidual setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
+      'visited current frontier tree path cut risk dropped flowEdge probe deadend update residualArc zeroResidual setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
     )
 
     c.nodes().forEach((node) => {
@@ -549,7 +573,11 @@ function applyHighlight() {
       }
       if (!showEdgeLabels.value && !forceEdgeLabels.value) edge.data('label', '')
       else if (custom !== undefined) edge.data('label', custom)
-      else if (!isRev) edge.data('label', String(edge.data('cap')))
+      else if (!isRev) {
+        // 图层没给数字（还没算过最大流）时：残量网络的余额就是容量本身
+        const cap = edge.data('cap')
+        edge.data('label', showResidual.value ? `余${cap}/总${cap}` : String(cap))
+      }
     })
   })
 }
@@ -600,6 +628,12 @@ function toggleReverseArcs() {
   applyHighlight()
 }
 
+// 残量网络 / 原图：只换边上数字的口径，反向弧由「反向边」按钮单独控制
+function toggleResidual() {
+  showResidual.value = !showResidual.value
+  applyHighlight()
+}
+
 function exportPng() {
   const c = cy.value
   if (!c || !store.graph) return
@@ -647,6 +681,7 @@ watch(() => store.graph, rebuild)
 watch(mergedHighlight, applyHighlight, { deep: true })
 watch(showEdgeLabels, applyHighlight)
 watch(showReverseArcs, applyHighlight)
+watch(() => store.showResidual, applyHighlight)
 watch(supplyMeta, applyHighlight)
 watch(() => store.focusEdge, applyHighlight)
 watch(() => store.flowStage, applyHighlight)

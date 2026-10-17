@@ -41,6 +41,11 @@ export const store = reactive({
   source: 1,
   sink: 1,
 
+  // 画布显示偏好：边上的数字按「残量网络」（余 x / 总 y）还是「原图」（只写容量）显示。
+  // 由 GraphCanvas 工具栏的「残量网络」按钮切换；最大流面板也算边标签，读的是同一个开关，
+  // 免得工具栏和面板各写各的、数字口径对不上。
+  showResidual: true,
+
   traversalLayer: emptyLayer(),
   flowLayer: emptyLayer(),
   flowResult: null, // 最近一次最大流结果，邻接矩阵面板会顺便显示 flow/cap
