@@ -14,9 +14,10 @@
 
 import { createFallbackCore } from '../src/wasm/fallback.js'
 import { sampleGraphs } from '../src/samples/sampleGraphs.js'
-import { buildNarration, arcKey } from '../src/flow/narrator.js'
+import { buildNarration, buildResidualView, arcKey } from '../src/flow/narrator.js'
 import {
   SUPPLY_CHAIN_SAMPLE,
+  analyzeLineImpact,
   buildGraphTextWithExtraCapacity,
   buildSupplyChainSummary,
   formatSupplyRoute,
@@ -314,6 +315,81 @@ for (const [name, text, s, t] of [
 }
 
 // ------------------------------------------------------------
+//  8b. 残量网络视图：点「残量网络」按钮画到画布上的那张图，
+//      必须就是「核心的最终残量网络 + 最小割」
+// ------------------------------------------------------------
+const capAt = (snap, u, v) => {
+  if (snap.matrix && snap.matrix[u]) return snap.matrix[u][v] || 0
+  const e = snap.edges.find((x) => x.u === u && x.v === v)
+  return e ? e.cap : 0
+}
+
+for (const [name, text, s, t] of [
+  ['graph.txt 1->6', graph1.text, 1, 6],
+  ['graph2.txt 1->5', graph2.text, 1, 5],
+  ['rev.txt 1->4', rev.text, 1, 4],
+]) {
+  core.loadText(text, name)
+  const snap = core.snapshot()
+  const res = core.maxFlow(s, t)
+  const view = buildResidualView(res, snap)
+
+  ok(`残量网络视图能生成（${name}）`, !!view)
+  if (!view) continue
+
+  ok(`重放出的 S 侧 == 核心的 S 侧（${name}）`, view.verified === true)
+  eq(`残量网络的 S / T 和核心一样（${name}）`, [view.sets.S, view.sets.T], [res.sourceSide, res.sinkSide])
+  eq(`残量网络的割边和核心一样（${name}）`, view.cutEdges, res.cutEdges)
+  eq(
+    `残量网络的最大流 / 最小割和核心一样（${name}）`,
+    [view.maxFlow, view.cutCapacity],
+    [res.value, res.cutCapacity],
+  )
+
+  // 每条正向弧按残余量分类：余量 > 0 → residualArc「余 r」；余量 0 → zeroResidual
+  const cutKeys = new Set(view.cutEdges.map(([u, v]) => `${u}_${v}`))
+  let arcsOk = true
+  let cutOk = true
+  for (const e of snap.edges) {
+    const k = `${e.u}_${e.v}`
+    if (cutKeys.has(k)) {
+      if (view.edges[k] !== 'cut') cutOk = false
+      continue
+    }
+    const r = capAt(snap, e.u, e.v) - (view.flow[arcKey(e.u, e.v)] || 0)
+    if (r > 0) {
+      if (view.edges[k] !== 'residualArc' || view.edgeLabels[k] !== `余 ${r}`) arcsOk = false
+    } else if (view.edges[k] !== 'zeroResidual') {
+      arcsOk = false
+    }
+  }
+  ok(`每条正向弧都按余量分类正确（${name}）`, arcsOk)
+  ok(`每条割边都标成了 cut（${name}）`, cutOk)
+
+  // 割边一定已经饱和（容量 - 净流量 == 0）—— 这就是「最大流 = 最小割」的来源
+  ok(
+    `割边都已经饱和（${name}）`,
+    view.cutEdges.every(
+      ([u, v]) => capAt(snap, u, v) - (view.flow[arcKey(u, v)] || 0) === 0,
+    ),
+  )
+
+  // 反向弧：原图里没有这条弧、且净流量 > 0 时才画，余额 = 能撤回的流量
+  let revOk = true
+  for (const e of snap.edges) {
+    if (snap.edges.some((x) => x.u === e.v && x.v === e.u)) continue
+    const label = view.edgeLabels[`rev:${e.v}_${e.u}`]
+    const r = capAt(snap, e.v, e.u) - (view.flow[arcKey(e.v, e.u)] || 0)
+    if (r > 0) {
+      if (label !== `余 ${r}`) revOk = false
+    } else if (label !== undefined) {
+      revOk = false
+    }
+  }
+  ok(`反向弧的余额 == 可撤回的流量（${name}）`, revOk)
+}
+
+// ------------------------------------------------------------
 //  9. 供应链应用：最大可交付量、瓶颈割集、扩容模拟
 // ------------------------------------------------------------
 core.loadText(SUPPLY_CHAIN_SAMPLE.text, 'supply-chain')
@@ -346,6 +422,109 @@ const expanded = buildGraphTextWithExtraCapacity(scSnap, 4, 6, 5)
 core.loadText(expanded, 'supply-chain-expanded')
 const scExpanded = core.maxFlow(SUPPLY_CHAIN_SAMPLE.source, SUPPLY_CHAIN_SAMPLE.sink)
 ok('扩容瓶颈线路后最大可交付量提升', scExpanded.value > scRes.value)
+
+// ------------------------------------------------------------
+//  10. 问题定位：线路影响分析（改一条线 → 重算 → 和基线对比）
+// ------------------------------------------------------------
+const analysisCore = createFallbackCore()
+analysisCore.loadText(SUPPLY_CHAIN_SAMPLE.text, 'supply-chain')
+const analysisGraph = analysisCore.snapshot()
+const analysisBase = {
+  originalText: SUPPLY_CHAIN_SAMPLE.text,
+  source: SUPPLY_CHAIN_SAMPLE.source,
+  sink: SUPPLY_CHAIN_SAMPLE.sink,
+}
+
+const failAnalysis = analyzeLineImpact(analysisCore, analysisGraph, SUPPLY_CHAIN_SAMPLE, {
+  ...analysisBase,
+  mode: 'fail',
+})
+ok('线路分析：中断模式能算出结果', failAnalysis.ok)
+eq('线路分析：基线最大流 = 19', failAnalysis.base, 19)
+eq('线路分析：缺口 = 需求 24 - 基线 19', failAnalysis.gap, 5)
+ok(
+  '线路分析：最脆弱的是 1→2（影响 11）',
+  !!failAnalysis.summary.worst &&
+    failAnalysis.summary.worst.key === '1_2' &&
+    failAnalysis.summary.worst.impact === 11 &&
+    failAnalysis.summary.worst.isCut === false,
+)
+ok(
+  '线路分析：8→10 是冗余线路（断了也不影响）',
+  failAnalysis.rows.some((r) => r.key === '8_10' && r.impact === 0),
+)
+ok(
+  '线路分析：瓶颈线路被标出来（4 条割边都在结果里）',
+  ['4_6', '5_8', '7_9', '7_10'].every((k) =>
+    failAnalysis.rows.some((r) => r.key === k && r.isCut),
+  ),
+)
+
+const halfAnalysis = analyzeLineImpact(analysisCore, analysisGraph, SUPPLY_CHAIN_SAMPLE, {
+  ...analysisBase,
+  mode: 'degrade',
+  ratio: 0.5,
+})
+ok(
+  '线路分析：运力降到 50% 时 1→2 仍然最敏感',
+  !!halfAnalysis.summary.worst && halfAnalysis.summary.worst.key === '1_2',
+)
+eq('线路分析：降级比例会出现在结果里', halfAnalysis.ratio, 0.5)
+
+// 情景参数可以改：降到 80% 的影响应该小于降到 50%
+const mildAnalysis = analyzeLineImpact(analysisCore, analysisGraph, SUPPLY_CHAIN_SAMPLE, {
+  ...analysisBase,
+  mode: 'degrade',
+  ratio: 0.8,
+})
+ok(
+  '线路分析：降级到 80% 的影响小于降到 50%',
+  mildAnalysis.summary.worst.impact < halfAnalysis.summary.worst.impact,
+)
+
+const expandAnalysis = analyzeLineImpact(analysisCore, analysisGraph, SUPPLY_CHAIN_SAMPLE, {
+  ...analysisBase,
+  mode: 'expand',
+  delta: 5,
+})
+eq('线路分析：扩容 +5 只有 4 条线路有效', expandAnalysis.summary.affected.length, 4)
+eq(
+  '线路分析：扩容 +5 每条提升 1',
+  expandAnalysis.summary.affected.every((r) => r.impact === 1),
+  true,
+)
+eq(
+  '线路分析：有效的正好是 4 条瓶颈割边',
+  expandAnalysis.summary.affected
+    .map((r) => [r.u, r.v])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]),
+  [
+    [4, 6],
+    [5, 8],
+    [7, 9],
+    [7, 10],
+  ],
+)
+
+// 扩容增量也能改：+10 的提升不会小于 +5（扩容不会让最大流变小）
+const bigExpand = analyzeLineImpact(analysisCore, analysisGraph, SUPPLY_CHAIN_SAMPLE, {
+  ...analysisBase,
+  mode: 'expand',
+  delta: 10,
+})
+ok(
+  '线路分析：扩容 +10 的提升不小于 +5',
+  bigExpand.summary.worst.impact >= expandAnalysis.summary.worst.impact,
+)
+
+// 关键回归：分析是在“影子图”上做的，跑完必须把核心还原成原始图
+const restoredSnap = analysisCore.snapshot()
+eq(
+  '线路分析：跑完后核心图已还原（边数不变）',
+  restoredSnap.edges.length,
+  analysisGraph.edges.length,
+)
+eq('线路分析：还原后最大流仍是 19', analysisCore.maxFlow(1, 12).value, 19)
 
 // ------------------------------------------------------------
 //  汇总

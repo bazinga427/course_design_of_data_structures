@@ -325,3 +325,123 @@ export function buildNarration(result, graph, options = {}) {
 
   return { frames, verified, reason: verified ? '' : 'cut-mismatch' }
 }
+
+/**
+ * 残量网络视图：最大流演示跑完之后「定格」的那张残量网络，
+ * 整理成画布图层（nodes / edges / edgeLabels）要的数据。
+ *
+ * 和讲解帧的区别：它只有一张终态快照，不参与时间轴。画布按它渲染就能看到：
+ *   * 还有余量的正向弧 —— 标「余 r」
+ *   * 已经饱和的正向弧 —— 残量网络里它没了，只留一条淡灰的边
+ *   * 反向弧 —— 原图没有、但推过流之后可以撤回的那条，标「余 r」
+ *   * 割边 —— S 指向 T 的边（一定已经饱和），标「割 c」
+ * 顺便把 S / T 两侧也标出来，这张图就是「残量网络 + 最小割」。
+ *
+ * @param {object} result 核心 gv_max_flow() 的返回值
+ * @param {object} graph  核心 gv_snapshot() 的返回值
+ * @param {object} [options] { keyOf }
+ * @returns {null | {
+ *   nodes: object, edges: object, edgeLabels: object, flow: object,
+ *   sets: { S: number[], T: number[] }, cutEdges: number[][],
+ *   cutCapacity: number, maxFlow: number, verified: boolean,
+ * }}
+ */
+export function buildResidualView(result, graph, options = {}) {
+  if (!result || !result.ok || !graph) return null
+
+  const keyOf = options.keyOf || makeEdgeKeyer(graph)
+  const cap = makeCapLookup(graph)
+  const residual = makeResidual(cap)
+  const n = graph.n
+  const s = result.s
+  const t = result.t
+  const steps = Array.isArray(result.steps) ? result.steps : []
+  const maxFlow = result.value
+  const cutCapacity = result.cutCapacity
+
+  // 把所有增广路重放一遍，得到最终净流量（和 buildNarration 用的是同一套重放）
+  for (const step of steps) {
+    for (let k = 0; k + 1 < step.path.length; k += 1) {
+      residual.push(step.path[k], step.path[k + 1], step.bottleneck)
+    }
+  }
+  const flow = residual.snapshot()
+  const residualOf = (u, v) => cap(u, v) - (flow[arcKey(u, v)] || 0)
+
+  // S 侧 = 在最终残量网络里从 s 还能走到的点；剩下的就是 T 侧
+  const inS = new Array(n + 1).fill(false)
+  const queue = [s]
+  inS[s] = true
+  for (let head = 0; head < queue.length; head += 1) {
+    const u = queue[head]
+    for (let v = 1; v <= n; v += 1) {
+      if (residualOf(u, v) > 0 && !inS[v]) {
+        inS[v] = true
+        queue.push(v)
+      }
+    }
+  }
+
+  const nodes = {}
+  const sourceSide = []
+  const sinkSide = []
+  for (let v = 1; v <= n; v += 1) {
+    if (inS[v]) {
+      nodes[v] = 'setS'
+      sourceSide.push(v)
+    } else {
+      nodes[v] = 'setT'
+      sinkSide.push(v)
+    }
+  }
+
+  // 割边 = 原图里从 S 指向 T 的边（这些边在残量网络里一定已经饱和）
+  const cutEdges = Array.isArray(result.cutEdges) ? result.cutEdges : []
+  const cutSet = new Set(cutEdges.map(([u, v]) => keyOf(u, v)))
+
+  const edges = {}
+  const edgeLabels = {}
+  const listed = new Set(graph.edges.map((e) => `${e.u}_${e.v}`))
+
+  for (const e of graph.edges) {
+    const k = keyOf(e.u, e.v)
+    if (cutSet.has(k)) {
+      // 割边：从 S 指向 T，容量就是它贡献给最小割的那一份
+      edges[k] = 'cut'
+      edgeLabels[k] = `割 ${cap(e.u, e.v)}`
+      continue
+    }
+    const r = residualOf(e.u, e.v)
+    if (r > 0) {
+      edges[k] = 'residualArc'
+      edgeLabels[k] = `余 ${r}`
+    } else {
+      // 饱和了：残量网络里这条正向弧已经不存在
+      edges[k] = 'zeroResidual'
+      edgeLabels[k] = '余 0'
+    }
+  }
+
+  // 反向弧：正方向推过多少流，残量网络里就有一条余额 = 净流量的反向弧
+  // （原图里没有这条弧，画布上画成青蓝虚线，余额表示能撤回来多少）
+  if (graph.edges.length <= 400) {
+    for (const e of graph.edges) {
+      if (listed.has(`${e.v}_${e.u}`)) continue
+      const r = residualOf(e.v, e.u)
+      if (r > 0) edgeLabels[`rev:${e.v}_${e.u}`] = `余 ${r}`
+    }
+  }
+
+  return {
+    nodes,
+    edges,
+    edgeLabels,
+    flow,
+    sets: { S: sourceSide, T: sinkSide },
+    cutEdges,
+    cutCapacity,
+    maxFlow,
+    // 和核心给的 S 侧对一下，对不上说明重放有问题，界面可以提示
+    verified: sameSet(sourceSide, result.sourceSide || []),
+  }
+}

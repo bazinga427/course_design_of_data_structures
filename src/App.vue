@@ -46,10 +46,25 @@
 
     <main class="app-body">
       <aside class="side">
-        <SupplyChainPanel />
-        <StoragePanel />
-        <TraversalPanel />
-        <FlowAnimation />
+        <div class="side-tabs" role="tablist" aria-label="功能分块">
+          <button
+            v-for="tab in sideTabs"
+            :key="tab.id"
+            class="side-tab"
+            :class="{ active: activePanel === tab.id }"
+            role="tab"
+            :aria-selected="String(activePanel === tab.id)"
+            @click="activePanel = tab.id"
+          >
+            <span class="tab-name">{{ tab.label }}</span>
+            <span class="tab-sub">{{ tab.sub }}</span>
+          </button>
+        </div>
+
+        <SupplyChainPanel v-show="activePanel === 'supply'" />
+        <StoragePanel v-show="activePanel === 'storage'" />
+        <TraversalPanel v-show="activePanel === 'traversal'" />
+        <FlowAnimation v-show="activePanel === 'flow'" />
       </aside>
       <section class="stage">
         <GraphCanvas />
@@ -123,6 +138,15 @@ import {
 
 const showSamples = ref(false)
 const showRandom = ref(false)
+
+// 左侧同一时间只展开一个功能分块：点哪个，哪个的面板才出现
+const sideTabs = [
+  { id: 'supply', label: '物流与供应链', sub: '运力瓶颈' },
+  { id: 'storage', label: '存储结构', sub: '邻接表 / 矩阵' },
+  { id: 'traversal', label: '遍历 DFS / BFS', sub: '序列判别' },
+  { id: 'flow', label: '最大流最小割', sub: '增广路动画' },
+]
+const activePanel = ref('supply')
 
 const form = reactive({
   n: 8,
@@ -326,6 +350,80 @@ onMounted(async () => {
   gap: 12px;
   overflow: auto;
   padding-right: 2px;
+}
+
+/* 左侧分块切换：选了哪个，下面才展开哪个面板 */
+.side-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--panel), #0d1626);
+  box-shadow: var(--shadow);
+  /* 滚动内容时这排切换按钮固定在顶部 */
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex-shrink: 0;
+}
+.side-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft);
+  background: #0e1727;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.side-tab .tab-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.side-tab .tab-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.side-tab:hover {
+  border-color: #3a527d;
+  color: var(--text);
+}
+.side-tab.active {
+  border-color: #2a7f96;
+  background: linear-gradient(180deg, #14465a, #0f3446);
+  color: #eaffff;
+}
+.side-tab.active .tab-sub {
+  color: #9fdcea;
+}
+
+/* 其余面板不跟着压缩：内容超高时让 .side 自己出滚动条，
+   否则 flex 会把面板压扁，再被 .panel 的 overflow: hidden 裁掉下半截 */
+.side > :deep(.panel:not(.supply-panel)) {
+  flex-shrink: 0;
+}
+
+/* 供应链面板：整块占满侧栏剩下的高度，
+   滚动条只出现在面板内容区里，面板标题栏固定不动 */
+.side > :deep(.supply-panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.side > :deep(.supply-panel) > .panel-head {
+  flex-shrink: 0;
+}
+.side > :deep(.supply-panel) > .panel-body {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .stage {

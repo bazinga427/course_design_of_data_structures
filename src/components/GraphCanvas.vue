@@ -60,7 +60,8 @@
       <span class="legend"><i style="background: #fbbf24"></i>当前点</span>
       <span class="legend"><i style="background: #22d3ee"></i>遍历树边</span>
       <span class="legend"><i style="background: #f87171"></i>增广路</span>
-      <span class="legend"><i style="background: #34d399"></i>正在推流 / 有流量</span>
+      <span class="legend"><i style="background: #34d399"></i>有流量 / 残量边（余量 &gt; 0）</span>
+      <span class="legend"><i style="background: #2b3a54"></i>已饱和（余量 0）</span>
       <span class="legend"><i style="background: #38bdf8"></i>反向弧（余额 = 可撤回的流）</span>
       <span class="legend"><i style="background: #f472b6"></i>割边</span>
       <span class="legend"><i style="background: #60a5fa"></i>S 侧 / 源点</span>
@@ -93,6 +94,8 @@ const nodeSizePresets = [
 
 const graph = computed(() => store.graph)
 const supplyMeta = computed(() => store.supplyChainMeta)
+// 残量网络阶段：边上的「余 r / 割 c」就是主角，不管工具栏的边权标签开关，一律显示
+const forceEdgeLabels = computed(() => store.flowStage === 'residual')
 
 const layouts = [
   { id: 'force', label: '力导向' },
@@ -336,6 +339,26 @@ function buildStylesheet() {
     },
   },
   {
+    // 残量网络里「还有余量」的正向弧：绿色实线，边上写「余 r」
+    selector: 'edge.residualArc',
+    style: {
+      'line-color': '#34d399',
+      'target-arrow-color': '#34d399',
+      width: 3.2 * u,
+      'z-index': 15,
+    },
+  },
+  {
+    // 残量网络里已经饱和的弧（余量 = 0）：淡化，只留个位置让人看得出原图骨架
+    selector: 'edge.zeroResidual',
+    style: {
+      'line-color': '#2b3a54',
+      'target-arrow-color': '#2b3a54',
+      opacity: 0.25,
+      'z-index': 1,
+    },
+  },
+  {
     selector: 'edge.cut',
     style: {
       'line-color': '#f472b6',
@@ -343,6 +366,17 @@ function buildStylesheet() {
       width: 5 * u,
       'line-style': 'dashed',
       'z-index': 40,
+    },
+  },
+  {
+    // 线路影响分析里点中的那一条：橙色粗虚线，和粉色的割边区分开
+    selector: 'edge.risk',
+    style: {
+      'line-color': '#fb923c',
+      'target-arrow-color': '#fb923c',
+      width: 5 * u,
+      'line-style': 'dashed',
+      'z-index': 45,
     },
   },
   ]
@@ -471,7 +505,7 @@ function applyHighlight() {
   const g = store.graph
   c.batch(() => {
     c.elements().removeClass(
-      'visited current frontier tree path cut flowEdge probe deadend update setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
+      'visited current frontier tree path cut risk flowEdge probe deadend update residualArc zeroResidual setS setT source sink sc-supplier sc-factory sc-warehouse sc-regional sc-dc sc-store sc-demand',
     )
 
     c.nodes().forEach((node) => {
@@ -508,10 +542,12 @@ function applyHighlight() {
       }
 
       if (cls) edge.addClass(cls)
+      // 线路影响分析里点中的那条线路：单独加一层橙色高亮，不动其它图层
+      if (!isRev && store.focusEdge === key) edge.addClass('risk')
       if (!isRev) {
         edge.removeStyle('line-fill line-gradient-stop-positions line-gradient-stop-colors')
       }
-      if (!showEdgeLabels.value) edge.data('label', '')
+      if (!showEdgeLabels.value && !forceEdgeLabels.value) edge.data('label', '')
       else if (custom !== undefined) edge.data('label', custom)
       else if (!isRev) edge.data('label', String(edge.data('cap')))
     })
@@ -612,6 +648,8 @@ watch(mergedHighlight, applyHighlight, { deep: true })
 watch(showEdgeLabels, applyHighlight)
 watch(showReverseArcs, applyHighlight)
 watch(supplyMeta, applyHighlight)
+watch(() => store.focusEdge, applyHighlight)
+watch(() => store.flowStage, applyHighlight)
 
 watch(() => store.selectedNode, syncSelection)
 watch(() => [store.source, store.sink], applyHighlight)

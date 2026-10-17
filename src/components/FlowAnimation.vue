@@ -25,13 +25,28 @@
 
       <div class="row">
         <button class="btn accent" :disabled="!graph" @click="compute">计算最大流 / 最小割</button>
-        <button class="btn" :disabled="!total || playing" @click="play">播放</button>
-        <button class="btn" :disabled="!total || !playing" @click="pause">暂停</button>
-        <button class="btn" :disabled="!total" @click="step">单步</button>
+        <button class="btn" :disabled="!total || playing || stage === 'residual'" @click="play">播放</button>
+        <button class="btn" :disabled="!total || !playing || stage === 'residual'" @click="pause">暂停</button>
+        <button class="btn" :disabled="!total || stage === 'residual'" @click="step">单步</button>
         <button class="btn" :disabled="!total" @click="reset">重置</button>
       </div>
 
       <div class="row" v-if="result">
+        <button
+          class="btn residual-btn"
+          :class="{ active: stage === 'residual' }"
+          @click="toggleResidual"
+        >
+          {{ stage === 'residual' ? '← 返回增广过程' : '残量网络' }}
+        </button>
+        <span class="hint">
+          {{ stage === 'residual'
+            ? '画布上是最终残量网络：余量 0 的边已淡化，青蓝虚线的反向弧是能撤回的流量，粉色虚线就是最小割'
+            : '增广路演示结束后点这里，把残量网络和最小割画到图上' }}
+        </span>
+      </div>
+
+      <div class="row" v-if="result && stage === 'augment'">
         <span class="field"><span>速度</span>
           <input type="range" min="200" max="2000" step="50" v-model.number="speed" />
           <span class="hint">{{ speed }} ms/步</span>
@@ -91,18 +106,23 @@
           <button
             class="step-item finish"
             :class="{ current: finished }"
-            @click="jumpToRound(result.steps.length)"
+            @click="jumpToCut"
           >
             <span>完成 · 显示最小割</span>
           </button>
         </div>
 
-        <p class="hint">
+        <p class="hint" v-if="stage === 'augment'">
           边上写的是「余 x / 总 y」：x 是余额（这条弧还能再推多少），y 是权重（这条弧的容量）。
           切到「流量 / 总容量」就变成「流 x / 总 y」。
           红色 = 本条增广路，绿色加粗 = 正在推流的这条弧，粉色虚线 = 割边，
           蓝色 S 侧（源点）/ 紫色 T 侧（汇点）。
           青蓝虚线 = 反向弧：原图里没有这条弧，它的余额就是已经推过去的流里能撤回多少。
+        </p>
+        <p class="hint" v-else>
+          残量网络：每条弧画的是「容量 − 已推流量」。
+          绿色 = 还有余量的弧，淡灰 = 已经饱和（余量 0）的弧，青蓝虚线 = 反向弧（余额就是能撤回的流量）。
+          最小割就是把 S（蓝色）和 T（紫色）分开的那些边，用粉色虚线标出来，容量和 = 最大流 {{ result.value }}。
         </p>
       </template>
     </div>
@@ -121,7 +141,7 @@ import {
   reverseEdgeKey,
   resetFlowNarration,
 } from '../store/graphStore.js'
-import { buildNarration, makeCapLookup, arcKey } from '../flow/narrator.js'
+import { buildNarration, buildResidualView, makeCapLookup, arcKey } from '../flow/narrator.js'
 
 const result = ref(null)
 const frames = shallowRef([])
@@ -130,6 +150,9 @@ const playing = ref(false)
 const speed = ref(900)
 const view = ref('res')
 const verified = ref(true)
+// stage：'augment' = 按增广路演示，'residual' = 定格看残量网络 + 最小割
+const stage = ref('augment')
+const residualView = ref(null)
 
 let timer = null
 
@@ -167,6 +190,15 @@ function capOf(u, v) {
 //  边的数字则统一按“当前残余网络”算，所以面板上的解说和画布永远一致。
 // ------------------------------------------------------------------
 function applyLayer() {
+  // 画布靠这个标记决定：残量阶段要强制显示边标签、并淡化余量为 0 的边
+  store.flowStage = stage.value
+
+  // 残量网络阶段：只画定格的那张图，不跟时间轴走
+  if (stage.value === 'residual') {
+    applyResidualLayer()
+    return
+  }
+
   const layer = emptyLayer('flow')
   const g = graph.value
   if (!g) {
@@ -225,6 +257,22 @@ function applyLayer() {
   setFlowLayer(layer)
 }
 
+// 残量网络图层：把 buildResidualView 算好的终态直接铺到画布上。
+// 边上的数字换成「余 r / 割 c」，零余量的边由 GraphCanvas 的 .zeroResidual 淡化。
+function applyResidualLayer() {
+  const layer = emptyLayer('flow')
+  const rv = residualView.value
+  if (!graph.value || !rv) {
+    setFlowLayer(layer)
+    return
+  }
+  Object.assign(layer.nodes, rv.nodes)
+  Object.assign(layer.edges, rv.edges)
+  Object.assign(layer.edgeLabels, rv.edgeLabels)
+  layer.title = `残量网络 · 最大流 ${rv.maxFlow} · 最小割 ${rv.cutCapacity}`
+  setFlowLayer(layer)
+}
+
 // 把当前帧同步给右侧的解说栏
 function publish() {
   store.flowIndex = index.value
@@ -272,6 +320,7 @@ function step() {
 
 function reset() {
   stopTimer()
+  stage.value = 'augment'
   index.value = -1
   publish()
 }
@@ -279,6 +328,8 @@ function reset() {
 function jump(i) {
   stopTimer()
   if (!total.value) return
+  // 在残量网络阶段点某一步 / 时间线时，自动切回增广过程
+  stage.value = 'augment'
   index.value = Math.max(-1, Math.min(i, frames.value.length - 1))
   publish()
 }
@@ -287,6 +338,20 @@ function jump(i) {
 function jumpToRound(roundIndex) {
   const k = frames.value.findIndex((f) => f.roundIndex === roundIndex)
   if (k >= 0) jump(k)
+}
+
+// 「完成 · 显示最小割」：直接跳到最后一帧（最小割那帧），
+// 不能按 roundIndex 找第一帧，否则会停在它前面的「结束判定」上
+function jumpToCut() {
+  const k = frames.value.findIndex((f) => f.kind === 'cut')
+  jump(k >= 0 ? k : frames.value.length - 1)
+}
+
+// 残量网络 / 增广过程 两个阶段来回切
+function toggleResidual() {
+  if (!result.value) return
+  stopTimer()
+  stage.value = stage.value === 'residual' ? 'augment' : 'residual'
 }
 
 function compute() {
@@ -302,8 +367,12 @@ function compute() {
     return
   }
   stopTimer()
+  stage.value = 'augment'
   result.value = res
   store.flowResult = res
+
+  // 残量网络只有一张终态快照：所有增广路都推完之后，每条弧的「容量 − 已推流量」
+  residualView.value = buildResidualView(res, graph.value)
 
   // 不传 keyOf：让 narrator 自己算图层键，它会把“反向弧”用单独的键区分开
   const narration = buildNarration(res, graph.value)
@@ -350,6 +419,8 @@ function useSelected(kind) {
 
 function clearResult() {
   stopTimer()
+  stage.value = 'augment'
+  residualView.value = null
   result.value = null
   frames.value = []
   index.value = -1
@@ -364,6 +435,7 @@ watch(index, () => {
   publish()
 })
 watch(view, applyLayer)
+watch(stage, applyLayer)
 
 watch(
   () => [store.source, store.sink],
@@ -397,6 +469,21 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 「残量网络」按钮：绿色系，和紫色的「计算最大流 / 最小割」区分开 */
+.btn.residual-btn {
+  border-color: #2f7d5f;
+  background: linear-gradient(180deg, #157a5a, #0f5c44);
+  color: #e7fff5;
+}
+.btn.residual-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1a8f69, #12684d);
+}
+.btn.residual-btn.active {
+  border-color: var(--green);
+  background: linear-gradient(180deg, #1d8f6b, #14684c);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.45);
+}
+
 .steps {
   display: flex;
   flex-direction: column;

@@ -44,6 +44,8 @@ export const store = reactive({
   traversalLayer: emptyLayer(),
   flowLayer: emptyLayer(),
   flowResult: null, // 最近一次最大流结果，邻接矩阵面板会顺便显示 flow/cap
+  // 最大流面板当前处在哪个阶段：'augment' = 按增广路演示，'residual' = 残量网络 + 最小割
+  flowStage: 'augment',
 
   // ---- 最大流过程解说（FlowAnimation 写，FlowNarrator 读）----
   flowFrames: [], // 解说帧的轻量索引，右侧解说栏画时间线用
@@ -55,6 +57,7 @@ export const store = reactive({
   flowControls: null, // 由 FlowAnimation 注册：{ compute, jump, play, pause, step, reset }
 
   supplyChainMeta: null, // 供应链业务元数据：节点名称、线路说明等，只影响展示和业务解释
+  focusEdge: null, // 线路影响分析里点中的那条线路 key（形如 '4_6'），画布用它做聚焦高亮
   toast: { text: '', type: 'info', seq: 0 },
 })
 
@@ -85,12 +88,14 @@ export function resetFlowNarration() {
   store.flowTotal = 0
   store.flowPlaying = false
   store.flowVerified = true
+  store.flowStage = 'augment'
 }
 
 function resetFocus() {
   store.traversalLayer = emptyLayer()
   store.flowLayer = emptyLayer()
   store.flowResult = null
+  store.focusEdge = null
   resetFlowNarration()
 }
 
